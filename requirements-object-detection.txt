@@ -1,0 +1,5 @@
+# Optional MVP 2 object-detection dependencies.
+#
+# Keep these separate from the base requirements so the webcam viewer and health
+# check remain lightweight and usable even when YOLO/PyTorch cannot be installed.
+ultralytics>=8.3

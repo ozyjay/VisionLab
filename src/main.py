@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 from dataclasses import asdict
 from datetime import datetime
 import importlib.util
@@ -16,6 +17,7 @@ from urllib.request import Request, urlopen
 
 from .camera import Camera, check_camera, cv2
 from .config import AppConfig
+from .detectors.object_detector import Detection, ObjectDetector
 
 
 WINDOW_NAME = "Local AI Vision Assistant"
@@ -60,6 +62,24 @@ def _check_vllm(config: AppConfig) -> str:
         return f"vLLM endpoint: check failed at {url} ({exc})"
 
 
+def _check_object_detector(config: AppConfig) -> list[str]:
+    lines = [
+        f"Object detector backend: {config.object_detector_backend}",
+        f"Object detector model: {config.object_model_path}",
+        f"Object confidence threshold: {config.object_confidence_threshold:.2f}",
+        f"Object detection interval: every {config.object_detection_interval} frame(s)",
+        f"Object detector device: {config.object_device}",
+    ]
+    model_path = Path(config.object_model_path)
+    lines.append(f"Object model file: {'found' if model_path.exists() else 'missing'}")
+    lines.append(
+        "Ultralytics: available"
+        if _module_available("ultralytics")
+        else "Ultralytics: not installed"
+    )
+    return lines
+
+
 def run_health_check(config: AppConfig) -> int:
     """Print local environment and camera health information."""
 
@@ -90,6 +110,9 @@ def run_health_check(config: AppConfig) -> int:
     else:
         print("ONNX Runtime: not installed")
 
+    for line in _check_object_detector(config):
+        print(line)
+
     print(_check_vllm(config))
     print()
     print("Configuration")
@@ -102,6 +125,10 @@ def run_health_check(config: AppConfig) -> int:
     print(f"vllm_base_url: {config.vllm_base_url}")
     print(f"vllm_model: {config.vllm_model}")
     print(f"object_model_path: {config.object_model_path}")
+    print(f"object_detector_backend: {config.object_detector_backend}")
+    print(f"object_confidence_threshold: {config.object_confidence_threshold}")
+    print(f"object_detection_interval: {config.object_detection_interval}")
+    print(f"object_device: {config.object_device}")
     print(f"face_model_path: {config.face_model_path}")
     return 0
 
@@ -126,36 +153,99 @@ def _save_frame(frame: Any, captures_dir: str) -> Path:
     return path
 
 
+def _object_counts(detections: list[Detection]) -> Counter[str]:
+    return Counter(detection.label for detection in detections if detection.source == "object")
+
+
+def _draw_object_detections(frame: Any, detections: list[Detection]) -> None:
+    """Draw object boxes and labels onto the current frame."""
+
+    height, width = frame.shape[:2]
+    for detection in detections:
+        if detection.source != "object":
+            continue
+
+        x1, y1, x2, y2 = detection.bbox
+        x1 = max(0, min(width - 1, x1))
+        y1 = max(0, min(height - 1, y1))
+        x2 = max(0, min(width - 1, x2))
+        y2 = max(0, min(height - 1, y2))
+        if x2 <= x1 or y2 <= y1:
+            continue
+
+        colour = (80, 220, 80)
+        cv2.rectangle(frame, (x1, y1), (x2, y2), colour, 2)
+        label = f"{detection.label} {detection.confidence:.2f}"
+        (text_width, text_height), _ = cv2.getTextSize(
+            label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1
+        )
+        label_y1 = max(0, y1 - text_height - 8)
+        label_y2 = max(text_height + 8, y1)
+        cv2.rectangle(frame, (x1, label_y1), (x1 + text_width + 8, label_y2), colour, -1)
+        cv2.putText(
+            frame,
+            label,
+            (x1 + 4, label_y2 - 5),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (0, 0, 0),
+            1,
+        )
+
+
 def _draw_overlay(
     frame: Any,
     fps: float,
     frame_id: int,
     config: AppConfig,
     show_face_placeholder: bool,
-    show_object_placeholder: bool,
+    object_detection_enabled: bool,
+    object_detections: list[Detection],
+    object_status: str,
     privacy_blur: bool,
     show_help: bool,
     last_capture: str | None,
 ) -> None:
     height, width = frame.shape[:2]
-    cv2.rectangle(frame, (0, 0), (width, 118 if show_help else 96), (20, 20, 20), -1)
-    _draw_text(frame, "Local AI Vision Assistant - MVP 1 Webcam Viewer", 12, 24, (120, 220, 255), 0.6)
+    panel_height = 188 if show_help else 150
+    cv2.rectangle(frame, (0, 0), (width, panel_height), (20, 20, 20), -1)
+    _draw_text(frame, "Local AI Vision Assistant - MVP 2 Object Detection", 12, 24, (120, 220, 255), 0.6)
     _draw_text(frame, f"FPS: {fps:5.1f} | Frame: {frame_id} | Size: {width}x{height}", 12, 48)
     _draw_text(frame, f"Modes: {config.active_modes}", 12, 72)
+    counts = _object_counts(object_detections)
+    count_text = ", ".join(f"{label}:{count}" for label, count in counts.most_common(4))
+    if not count_text:
+        count_text = "none"
+    object_status_short = object_status if len(object_status) <= 92 else object_status[:89] + "..."
     _draw_text(
         frame,
-        "Placeholders: "
-        f"face overlay {'ON' if show_face_placeholder else 'OFF'} | "
-        f"object overlay {'ON' if show_object_placeholder else 'OFF'} | "
-        f"privacy blur {'ON' if privacy_blur else 'OFF'}",
+        f"Objects: {'ON' if object_detection_enabled else 'OFF'} | "
+        f"detections {len(object_detections)} | counts {count_text}",
         12,
         96,
-        (180, 255, 180) if privacy_blur else (230, 230, 230),
+        (180, 255, 180) if object_detection_enabled else (230, 230, 230),
         0.5,
+    )
+    _draw_text(
+        frame,
+        f"Object status: {object_status_short}",
+        12,
+        120,
+        (180, 255, 180) if "ready" in object_status.lower() else (120, 220, 255),
+        0.5,
+    )
+    _draw_text(
+        frame,
+        f"Face placeholder {'ON' if show_face_placeholder else 'OFF'} | "
+        f"privacy blur placeholder {'ON' if privacy_blur else 'OFF'}",
+        12,
+        144,
+        (180, 255, 180) if privacy_blur else (230, 230, 230),
+        0.48,
     )
 
     if show_help:
-        _draw_text(frame, "Keys: q quit | s save | f face placeholder | o object placeholder | p privacy blur | h help", 12, 118, (220, 220, 255), 0.48)
+        _draw_text(frame, "Keys: q quit | s save | f face placeholder | o object detection | p privacy blur | h help", 12, 168, (220, 220, 255), 0.48)
 
     if last_capture:
         _draw_text(frame, f"Saved: {last_capture}", 12, height - 16, (160, 255, 160), 0.5)
@@ -178,14 +268,22 @@ def run_viewer(config: AppConfig) -> int:
         return 1
 
     print(status.message)
-    print("Keyboard controls: q quit, s save, f face placeholder, o object placeholder, p privacy blur, h help")
+    detector = ObjectDetector(
+        model_path=config.object_model_path,
+        backend=config.object_detector_backend,
+        confidence_threshold=config.object_confidence_threshold,
+        device=config.object_device,
+    )
+    print(detector.status_message)
+    print("Keyboard controls: q quit, s save, f face placeholder, o object detection, p privacy blur, h help")
 
     frame_id = 0
     fps = 0.0
     last_time = time.perf_counter()
     last_capture: str | None = None
     show_face_placeholder = config.enable_face_detection
-    show_object_placeholder = config.enable_object_detection
+    object_detection_enabled = config.enable_object_detection
+    object_detections: list[Detection] = []
     privacy_blur = False
     show_help = True
     frame_delay = 1.0 / max(1, config.target_fps)
@@ -206,13 +304,28 @@ def run_viewer(config: AppConfig) -> int:
                 fps = current_fps if fps == 0.0 else (fps * 0.9 + current_fps * 0.1)
             last_time = now
 
+            if object_detection_enabled and detector.available:
+                should_infer = (
+                    frame_id == 1
+                    or frame_id % config.object_detection_interval == 0
+                    or not object_detections
+                )
+                if should_infer:
+                    object_detections = detector.detect(frame)
+            elif not object_detection_enabled:
+                object_detections = []
+
+            _draw_object_detections(frame, object_detections)
+
             _draw_overlay(
                 frame,
                 fps,
                 frame_id,
                 config,
                 show_face_placeholder,
-                show_object_placeholder,
+                object_detection_enabled,
+                object_detections,
+                detector.status_message,
                 privacy_blur,
                 show_help,
                 last_capture,
@@ -230,8 +343,14 @@ def run_viewer(config: AppConfig) -> int:
                 show_face_placeholder = not show_face_placeholder
                 print(f"Face overlay placeholder: {'ON' if show_face_placeholder else 'OFF'}")
             elif key == ord("o"):
-                show_object_placeholder = not show_object_placeholder
-                print(f"Object overlay placeholder: {'ON' if show_object_placeholder else 'OFF'}")
+                object_detection_enabled = not object_detection_enabled
+                if object_detection_enabled:
+                    print(f"Object detection: ON - {detector.status_message}")
+                    if not detector.available:
+                        print("Object detection is enabled, but no usable detector is available.")
+                else:
+                    object_detections = []
+                    print("Object detection: OFF")
             elif key == ord("p"):
                 privacy_blur = not privacy_blur
                 print(f"Privacy blur placeholder: {'ON' if privacy_blur else 'OFF'}")

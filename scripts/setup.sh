@@ -4,6 +4,27 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VENV_DIR="${VISION_VENV_DIR:-$PROJECT_ROOT/.venv}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
+INSTALL_OBJECT_DETECTION="${VISION_INSTALL_OBJECT_DETECTION:-0}"
+
+for arg in "$@"; do
+    case "$arg" in
+        --object-detection)
+            INSTALL_OBJECT_DETECTION="1"
+            ;;
+        --help|-h)
+            echo "Usage: scripts/setup.sh [--object-detection]"
+            echo
+            echo "Options:"
+            echo "  --object-detection  Install optional Ultralytics YOLO dependencies."
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $arg" >&2
+            echo "Usage: scripts/setup.sh [--object-detection]" >&2
+            exit 2
+            ;;
+    esac
+done
 
 cd "$PROJECT_ROOT"
 
@@ -38,6 +59,15 @@ echo "Upgrading pip..."
 
 echo "Installing dependencies..."
 "$VENV_PYTHON" -m pip install -r requirements.txt
+
+if [[ "$INSTALL_OBJECT_DETECTION" =~ ^(1|true|TRUE|yes|YES|on|ON)$ ]]; then
+    echo "Installing optional object-detection dependencies..."
+    "$VENV_PYTHON" -m pip install -r requirements-object-detection.txt
+else
+    echo "Skipping optional object-detection dependencies."
+    echo "Install them later with:"
+    echo "  .venv/bin/python -m pip install -r requirements-object-detection.txt"
+fi
 
 echo
 echo "Setup complete."
