@@ -17,6 +17,7 @@ from urllib.request import Request, urlopen
 
 from .camera import Camera, check_camera, cv2
 from .config import AppConfig
+from .detectors.face_detector import FaceDetector
 from .detectors.object_detector import Detection, ObjectDetector
 
 
@@ -80,6 +81,20 @@ def _check_object_detector(config: AppConfig) -> list[str]:
     return lines
 
 
+def _check_face_detector(config: AppConfig) -> list[str]:
+    lines = [
+        f"Face detection enabled: {config.enable_face_detection}",
+        f"Face detector model: {config.face_model_path}",
+    ]
+    try:
+        detector = FaceDetector(model_path=config.face_model_path)
+        lines.append(f"Face detector available: {detector.available}")
+        lines.append(f"Face detector status: {detector.status_message}")
+    except Exception as exc:
+        lines.append(f"Face detector check failed: {exc}")
+    return lines
+
+
 def run_health_check(config: AppConfig) -> int:
     """Print local environment and camera health information."""
 
@@ -111,6 +126,9 @@ def run_health_check(config: AppConfig) -> int:
         print("ONNX Runtime: not installed")
 
     for line in _check_object_detector(config):
+        print(line)
+
+    for line in _check_face_detector(config):
         print(line)
 
     print(_check_vllm(config))
@@ -193,12 +211,68 @@ def _draw_object_detections(frame: Any, detections: list[Detection]) -> None:
         )
 
 
+def _draw_face_detections(frame: Any, detections: list[Detection]) -> None:
+    """Draw generic non-identifying face boxes onto the current frame."""
+
+    height, width = frame.shape[:2]
+    face_index = 0
+    for detection in detections:
+        if detection.source != "face":
+            continue
+
+        x1, y1, x2, y2 = detection.bbox
+        x1 = max(0, min(width - 1, x1))
+        y1 = max(0, min(height - 1, y1))
+        x2 = max(0, min(width - 1, x2))
+        y2 = max(0, min(height - 1, y2))
+        if x2 <= x1 or y2 <= y1:
+            continue
+
+        face_index += 1
+        colour = (255, 190, 90)
+        cv2.rectangle(frame, (x1, y1), (x2, y2), colour, 2)
+        label = f"face {face_index}"
+        cv2.putText(
+            frame,
+            label,
+            (x1, max(16, y1 - 8)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            colour,
+            1,
+        )
+
+
+def _blur_face_regions(frame: Any, detections: list[Detection]) -> None:
+    """Blur detected face regions in-place without storing face data."""
+
+    height, width = frame.shape[:2]
+    for detection in detections:
+        if detection.source != "face":
+            continue
+
+        x1, y1, x2, y2 = detection.bbox
+        x1 = max(0, min(width - 1, x1))
+        y1 = max(0, min(height - 1, y1))
+        x2 = max(0, min(width, x2))
+        y2 = max(0, min(height, y2))
+        if x2 <= x1 or y2 <= y1:
+            continue
+
+        region = frame[y1:y2, x1:x2]
+        blur_width = max(15, ((x2 - x1) // 2) | 1)
+        blur_height = max(15, ((y2 - y1) // 2) | 1)
+        frame[y1:y2, x1:x2] = cv2.GaussianBlur(region, (blur_width, blur_height), 0)
+
+
 def _draw_overlay(
     frame: Any,
     fps: float,
     frame_id: int,
     config: AppConfig,
-    show_face_placeholder: bool,
+    face_detection_enabled: bool,
+    face_detections: list[Detection],
+    face_status: str,
     object_detection_enabled: bool,
     object_detections: list[Detection],
     object_status: str,
@@ -207,7 +281,7 @@ def _draw_overlay(
     last_capture: str | None,
 ) -> None:
     height, width = frame.shape[:2]
-    panel_height = 188 if show_help else 150
+    panel_height = 212 if show_help else 150
     cv2.rectangle(frame, (0, 0), (width, panel_height), (20, 20, 20), -1)
     _draw_text(frame, "Local AI Vision Assistant - MVP 2 Object Detection", 12, 24, (120, 220, 255), 0.6)
     _draw_text(frame, f"FPS: {fps:5.1f} | Frame: {frame_id} | Size: {width}x{height}", 12, 48)
@@ -236,8 +310,8 @@ def _draw_overlay(
     )
     _draw_text(
         frame,
-        f"Face placeholder {'ON' if show_face_placeholder else 'OFF'} | "
-        f"privacy blur placeholder {'ON' if privacy_blur else 'OFF'}",
+        f"Faces: {'ON' if face_detection_enabled else 'OFF'} | "
+        f"face count {len(face_detections)} | privacy blur {'ON' if privacy_blur else 'OFF'}",
         12,
         144,
         (180, 255, 180) if privacy_blur else (230, 230, 230),
@@ -245,7 +319,9 @@ def _draw_overlay(
     )
 
     if show_help:
-        _draw_text(frame, "Keys: q quit | s save | f face placeholder | o object detection | p privacy blur | h help", 12, 168, (220, 220, 255), 0.48)
+        face_status_short = face_status if len(face_status) <= 96 else face_status[:93] + "..."
+        _draw_text(frame, f"Face status: {face_status_short}", 12, 168, (255, 220, 160), 0.48)
+        _draw_text(frame, "Keys: q quit | s save | f face detection | o object detection | p privacy blur | h help", 12, 188, (220, 220, 255), 0.48)
 
     if last_capture:
         _draw_text(frame, f"Saved: {last_capture}", 12, height - 16, (160, 255, 160), 0.5)
@@ -268,6 +344,8 @@ def run_viewer(config: AppConfig) -> int:
         return 1
 
     print(status.message)
+    face_detector = FaceDetector(model_path=config.face_model_path)
+    print(face_detector.status_message)
     detector = ObjectDetector(
         model_path=config.object_model_path,
         backend=config.object_detector_backend,
@@ -275,13 +353,14 @@ def run_viewer(config: AppConfig) -> int:
         device=config.object_device,
     )
     print(detector.status_message)
-    print("Keyboard controls: q quit, s save, f face placeholder, o object detection, p privacy blur, h help")
+    print("Keyboard controls: q quit, s save, f face detection, o object detection, p privacy blur, h help")
 
     frame_id = 0
     fps = 0.0
     last_time = time.perf_counter()
     last_capture: str | None = None
-    show_face_placeholder = config.enable_face_detection
+    face_detection_enabled = config.enable_face_detection
+    face_detections: list[Detection] = []
     object_detection_enabled = config.enable_object_detection
     object_detections: list[Detection] = []
     privacy_blur = False
@@ -304,6 +383,11 @@ def run_viewer(config: AppConfig) -> int:
                 fps = current_fps if fps == 0.0 else (fps * 0.9 + current_fps * 0.1)
             last_time = now
 
+            if (face_detection_enabled or privacy_blur) and face_detector.available:
+                face_detections = face_detector.detect(frame)
+            elif not face_detection_enabled and not privacy_blur:
+                face_detections = []
+
             if object_detection_enabled and detector.available:
                 should_infer = (
                     frame_id == 1
@@ -315,6 +399,11 @@ def run_viewer(config: AppConfig) -> int:
             elif not object_detection_enabled:
                 object_detections = []
 
+            if privacy_blur:
+                _blur_face_regions(frame, face_detections)
+            elif face_detection_enabled:
+                _draw_face_detections(frame, face_detections)
+
             _draw_object_detections(frame, object_detections)
 
             _draw_overlay(
@@ -322,7 +411,9 @@ def run_viewer(config: AppConfig) -> int:
                 fps,
                 frame_id,
                 config,
-                show_face_placeholder,
+                face_detection_enabled,
+                face_detections,
+                face_detector.status_message,
                 object_detection_enabled,
                 object_detections,
                 detector.status_message,
@@ -340,8 +431,14 @@ def run_viewer(config: AppConfig) -> int:
                 last_capture = str(path)
                 print(f"Saved frame to {path}")
             elif key == ord("f"):
-                show_face_placeholder = not show_face_placeholder
-                print(f"Face overlay placeholder: {'ON' if show_face_placeholder else 'OFF'}")
+                face_detection_enabled = not face_detection_enabled
+                if face_detection_enabled:
+                    print(f"Face detection: ON - {face_detector.status_message}")
+                    if not face_detector.available:
+                        print("Face detection is enabled, but no usable detector is available.")
+                else:
+                    face_detections = []
+                    print("Face detection: OFF")
             elif key == ord("o"):
                 object_detection_enabled = not object_detection_enabled
                 if object_detection_enabled:
@@ -353,7 +450,9 @@ def run_viewer(config: AppConfig) -> int:
                     print("Object detection: OFF")
             elif key == ord("p"):
                 privacy_blur = not privacy_blur
-                print(f"Privacy blur placeholder: {'ON' if privacy_blur else 'OFF'}")
+                print(f"Privacy blur: {'ON' if privacy_blur else 'OFF'}")
+                if privacy_blur and not face_detector.available:
+                    print("Privacy blur needs face detection, but no usable detector is available.")
             elif key == ord("h"):
                 show_help = not show_help
 

@@ -6,12 +6,14 @@ fallbacks. The current implementation covers **MVP 0**, **MVP 1**, and
 
 - environment and camera health checks
 - webcam viewer with FPS and frame-size overlay
-- keyboard controls for capture, object detection, and placeholder modes
+- keyboard controls for capture, object detection, and privacy modes
 - optional Ultralytics YOLO object detection with CPU-first defaults
+- non-identifying OpenCV face detection and privacy blur
 - cached object detections between inference frames for smoother display
 - resilient behaviour when optional GPU/model dependencies are unavailable
 
-The app does **not** identify people, store face data, or use cloud services.
+The app does **not** identify people, compute or store face embeddings, store
+face data, or use cloud services.
 
 ## Project structure
 
@@ -85,10 +87,36 @@ VISION_OBJECT_MODEL_PATH=models/yolo11n.pt \
 python -m src.main run
 ```
 
-The app will not download models automatically. Put a local YOLO model file at
-`models/yolo11n.pt`, or point `VISION_OBJECT_MODEL_PATH` to another local model.
+The app will not download models automatically at viewer startup. Put a local
+YOLO model file at `models/yolo11n.pt`, or point `VISION_OBJECT_MODEL_PATH` to
+another local model.
 If the file or optional dependency is missing, the webcam app still starts and
 prints a clear warning.
+
+### Try stronger YOLO models
+
+The bundled default is `yolo11n.pt` because it is small and CPU-friendly. To try
+stronger Ultralytics YOLO11 detection models, download one explicitly with
+PowerShell, then run the viewer against that local file:
+
+```powershell
+pwsh -File scripts/download-yolo-model.ps1 small
+pwsh -File scripts/run-yolo.ps1 -ModelPath models/yolo11s.pt
+```
+
+Useful size aliases:
+
+| Alias | Model | Notes |
+| --- | --- | --- |
+| `small` | `yolo11s.pt` | First upgrade to try; usually still practical on CPU |
+| `medium` | `yolo11m.pt` | Better accuracy, noticeably heavier |
+| `large` | `yolo11l.pt` | Stronger again; expect lower FPS |
+| `x` | `yolo11x.pt` | Heaviest YOLO11 option; best for GPU testing |
+
+The downloader also accepts explicit filenames such as `yolo11m.pt`. Ultralytics
+documents YOLO11 detection filenames as `yolo11n.pt`, `yolo11s.pt`,
+`yolo11m.pt`, `yolo11l.pt`, and `yolo11x.pt`:
+<https://docs.ultralytics.com/models/yolo11/>.
 
 If no command is supplied, the app defaults to `run`.
 
@@ -124,7 +152,7 @@ Configuration is loaded from environment variables:
 | `VISION_ENABLE_VLLM` | `false` | Enable vLLM health check |
 | `VISION_VLLM_BASE_URL` | `http://localhost:8000/v1` | OpenAI-compatible vLLM base URL |
 | `VISION_VLLM_MODEL` | `local-model` | Future vLLM model name |
-| `VISION_FACE_MODEL_PATH` | `models/face_detector.onnx` | Future face detector model |
+| `VISION_FACE_MODEL_PATH` | `models/face_detection_yunet_2026may.onnx` | Local OpenCV YuNet face detector |
 | `VISION_CAPTURES_DIR` | `captures` | Saved frame directory |
 | `VISION_LOGS_DIR` | `logs` | Future scene-state log directory |
 
@@ -140,17 +168,24 @@ VISION_CAMERA_INDEX=1 VISION_TARGET_FPS=15 python -m src.main run
 | --- | --- |
 | `q` | Quit |
 | `s` | Save current displayed frame to `captures/` |
-| `f` | Toggle face overlay placeholder |
+| `f` | Toggle non-identifying face detection |
 | `o` | Toggle object detection on or off |
-| `p` | Toggle privacy blur placeholder |
+| `p` | Toggle privacy blur for detected faces |
 | `h` | Show or hide help |
 
 ## Privacy notes
 
 - Face identity recognition is **not implemented**.
-- Face embedding storage is **not implemented**.
+- Face embeddings are **not implemented or stored**.
+- Face detection only draws generic boxes and counts visible faces.
 - Saved frames are only written when you press `s`.
-- Future face detection will support privacy blur without identifying people.
+- Privacy blur runs locally on detected face regions without identifying people.
+
+To enable face detection, download OpenCV Zoo's YuNet detector:
+
+```powershell
+pwsh -File scripts/download-face-detector.ps1
+```
 
 ## Object detection notes
 
@@ -163,6 +198,5 @@ VISION_CAMERA_INDEX=1 VISION_TARGET_FPS=15 python -m src.main run
 
 ## Next MVP
 
-Next step: **MVP 3 — Face detection and privacy mode**. Add lightweight face
-detection, draw face boxes, and apply privacy blur without identity recognition
-or face embedding storage.
+Next step: **MVP 4 — Scene-state summaries**. Summarise visible objects and
+generic face counts without identity recognition or face embedding storage.

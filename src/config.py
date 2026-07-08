@@ -51,7 +51,7 @@ class AppConfig:
     object_confidence_threshold: float = 0.35
     object_detection_interval: int = 3
     object_device: str = "cpu"
-    face_model_path: str = "models/face_detector.onnx"
+    face_model_path: str = "models/face_detection_yunet_2026may.onnx"
     captures_dir: str = "captures"
     logs_dir: str = "logs"
 
@@ -78,7 +78,9 @@ class AppConfig:
             ),
             object_detection_interval=max(1, _env_int("VISION_OBJECT_DETECTION_INTERVAL", 3)),
             object_device=os.getenv("VISION_OBJECT_DEVICE", "cpu").strip() or "cpu",
-            face_model_path=os.getenv("VISION_FACE_MODEL_PATH", "models/face_detector.onnx"),
+            face_model_path=os.getenv(
+                "VISION_FACE_MODEL_PATH", "models/face_detection_yunet_2026may.onnx"
+            ),
             captures_dir=os.getenv("VISION_CAPTURES_DIR", "captures"),
             logs_dir=os.getenv("VISION_LOGS_DIR", "logs"),
         )
@@ -92,6 +94,6 @@ class AppConfig:
             if self.enable_object_detection
             else "objects:off"
         )
-        face_mode = "faces:on" if self.enable_face_detection else "faces:placeholder"
+        face_mode = "faces:on" if self.enable_face_detection else "faces:off"
         vllm_mode = "vLLM:on" if self.enable_vllm else "vLLM:off"
         return f"{object_mode} | {face_mode} | {vllm_mode}"

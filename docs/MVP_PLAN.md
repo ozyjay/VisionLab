@@ -15,9 +15,9 @@ before adding the next layer.
 ## MVP 1 — Webcam viewer
 
 - Open a local webcam with OpenCV.
-- Show FPS, frame size, and active placeholder modes.
+- Show FPS, frame size, and active modes.
 - Support keyboard controls for quitting, saving frames, and toggling
-  face/object/privacy placeholders.
+  face detection, object detection, and privacy blur.
 
 ## MVP 2 — Object detection
 
