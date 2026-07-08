@@ -6,6 +6,7 @@ fallbacks. The current implementation covers **MVP 0**, **MVP 1**, and
 
 - environment and camera health checks
 - webcam viewer with FPS and frame-size overlay
+- resizable viewer window
 - keyboard controls for capture, object detection, and privacy modes
 - optional Ultralytics YOLO object detection with CPU-first defaults
 - non-identifying OpenCV face detection and privacy blur

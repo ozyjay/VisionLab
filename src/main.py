@@ -355,6 +355,8 @@ def run_viewer(config: AppConfig) -> int:
     print(detector.status_message)
     print("Keyboard controls: q quit, s save, f face detection, o object detection, p privacy blur, h help")
 
+    cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
+
     frame_id = 0
     fps = 0.0
     last_time = time.perf_counter()
