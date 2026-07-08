@@ -9,6 +9,7 @@ fallbacks. The current implementation covers **MVP 0**, **MVP 1**, and
 - resizable viewer window
 - keyboard controls for capture, object detection, and privacy modes
 - optional Ultralytics YOLO object detection with CPU-first defaults
+- ROCm-aware GPU mode helpers for Framework Desktop
 - non-identifying OpenCV face detection and privacy blur
 - cached object detections between inference frames for smoother display
 - resilient behaviour when optional GPU/model dependencies are unavailable
@@ -148,7 +149,7 @@ Configuration is loaded from environment variables:
 | `VISION_OBJECT_DETECTOR_BACKEND` | `ultralytics` | Object backend: `ultralytics`, `auto`, or `none` |
 | `VISION_OBJECT_CONFIDENCE_THRESHOLD` | `0.35` | Minimum detection confidence |
 | `VISION_OBJECT_DETECTION_INTERVAL` | `3` | Run object inference every N frames |
-| `VISION_OBJECT_DEVICE` | `cpu` | Ultralytics device, defaulting to CPU |
+| `VISION_OBJECT_DEVICE` | `cpu` | Ultralytics/Torch device: `cpu`, `auto`, `rocm`, or `cuda:0` |
 | `VISION_ENABLE_FACE_DETECTION` | `false` | Face overlay placeholder for MVP 1 |
 | `VISION_ENABLE_VLLM` | `false` | Enable vLLM health check |
 | `VISION_VLLM_BASE_URL` | `http://localhost:8000/v1` | OpenAI-compatible vLLM base URL |
@@ -194,8 +195,9 @@ pwsh -File scripts/download-face-detector.ps1
 - `Detection` contains `label`, `confidence`, `bbox`, and `source`.
 - Missing model files do not crash the app.
 - Ultralytics is optional so the base webcam demo remains lightweight.
-- CPU is the default device. Do not set CUDA-specific options unless you have a
-  matching local stack.
+- CPU is the default device. GPU mode is documented in `docs/GPU_MODE.md`.
+- For ROCm PyTorch, `VISION_OBJECT_DEVICE=auto` resolves to `cuda:0` when the
+  AMD GPU is available because PyTorch uses the `torch.cuda` namespace for ROCm.
 
 ## Next MVP
 

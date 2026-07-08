@@ -15,6 +15,7 @@ from typing import Any
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
+from .accelerator import get_torch_accelerator_status
 from .camera import Camera, check_camera, cv2
 from .config import AppConfig
 from .detectors.face_detector import FaceDetector
@@ -29,23 +30,21 @@ def _module_available(module_name: str) -> bool:
 
 
 def _check_torch() -> list[str]:
-    if not _module_available("torch"):
-        return ["torch: not installed", "ROCm/HIP: unavailable because torch is not installed"]
+    status = get_torch_accelerator_status("auto")
+    if not status.torch_available:
+        return [
+            "torch: not installed",
+            "ROCm/HIP: unavailable because torch is not installed",
+        ]
 
-    try:
-        import torch
-
-        lines = [f"torch: available ({torch.__version__})"]
-        hip_version = getattr(getattr(torch, "version", None), "hip", None)
-        lines.append(f"ROCm/HIP version: {hip_version or 'not reported by torch'}")
-        try:
-            lines.append(f"torch GPU available: {torch.cuda.is_available()}")
-            lines.append(f"torch GPU device count: {torch.cuda.device_count()}")
-        except Exception as exc:  # pragma: no cover - hardware-dependent.
-            lines.append(f"torch GPU check warning: {exc}")
-        return lines
-    except Exception as exc:
-        return [f"torch: import failed ({exc})", "ROCm/HIP: unavailable because torch failed"]
+    lines = [f"torch: available ({status.torch_version})"]
+    lines.append(f"ROCm/HIP version: {status.hip_version or 'not reported by torch'}")
+    lines.append(f"CUDA build version: {status.cuda_version or 'not reported by torch'}")
+    lines.append(f"torch GPU available: {status.gpu_available}")
+    lines.append(f"torch GPU device count: {status.device_count}")
+    lines.append(f"torch GPU device name: {status.device_name or 'none'}")
+    lines.append(f"torch auto device: {status.resolved_device} ({status.note})")
+    return lines
 
 
 def _check_vllm(config: AppConfig) -> str:
@@ -64,12 +63,16 @@ def _check_vllm(config: AppConfig) -> str:
 
 
 def _check_object_detector(config: AppConfig) -> list[str]:
+    accelerator = get_torch_accelerator_status(config.object_device)
     lines = [
         f"Object detector backend: {config.object_detector_backend}",
         f"Object detector model: {config.object_model_path}",
         f"Object confidence threshold: {config.object_confidence_threshold:.2f}",
         f"Object detection interval: every {config.object_detection_interval} frame(s)",
-        f"Object detector device: {config.object_device}",
+        f"Object detector requested device: {config.object_device}",
+        f"Object detector resolved device: {accelerator.resolved_device}",
+        f"Object accelerator backend: {accelerator.backend}",
+        f"Object accelerator note: {accelerator.note}",
     ]
     model_path = Path(config.object_model_path)
     lines.append(f"Object model file: {'found' if model_path.exists() else 'missing'}")
@@ -265,6 +268,12 @@ def _blur_face_regions(frame: Any, detections: list[Detection]) -> None:
         frame[y1:y2, x1:x2] = cv2.GaussianBlur(region, (blur_width, blur_height), 0)
 
 
+def _should_draw_face_boxes(face_detection_enabled: bool) -> bool:
+    """Return whether generic face boxes should be drawn over the frame."""
+
+    return face_detection_enabled
+
+
 def _draw_overlay(
     frame: Any,
     fps: float,
@@ -403,7 +412,7 @@ def run_viewer(config: AppConfig) -> int:
 
             if privacy_blur:
                 _blur_face_regions(frame, face_detections)
-            elif face_detection_enabled:
+            if _should_draw_face_boxes(face_detection_enabled):
                 _draw_face_detections(frame, face_detections)
 
             _draw_object_detections(frame, object_detections)

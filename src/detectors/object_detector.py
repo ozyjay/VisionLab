@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from ..accelerator import get_torch_accelerator_status
+
 
 @dataclass(slots=True)
 class Detection:
@@ -41,7 +43,9 @@ class ObjectDetector:
         self.model_path = model_path
         self.backend = backend.strip().lower()
         self.confidence_threshold = confidence_threshold
-        self.device = device
+        self.requested_device = device
+        self.accelerator_status = get_torch_accelerator_status(device)
+        self.device = self.accelerator_status.resolved_device
         self.available = False
         self.status_message = "Object detection is disabled."
         self._model: Any | None = None
@@ -94,7 +98,9 @@ class ObjectDetector:
             self.available = True
             self.status_message = (
                 f"Object detector ready: ultralytics model={path}, "
-                f"confidence>={self.confidence_threshold:.2f}, device={self.device}"
+                f"confidence>={self.confidence_threshold:.2f}, "
+                f"device={self.device} requested={self.requested_device} "
+                f"backend={self.accelerator_status.backend}"
             )
         except Exception as exc:
             self.status_message = f"Object detector failed to load {path}: {exc}"
