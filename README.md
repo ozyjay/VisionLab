@@ -32,20 +32,19 @@ logs/       # reserved for later JSONL scene-state logging
 Use a project-local virtual environment:
 
 ```bash
-python -m venv .venv
+bash scripts/setup.sh
 . .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
 ```
 
 PowerShell:
 
 ```powershell
-python -m venv .venv
+pwsh -File scripts/setup.ps1
 ./.venv/bin/Activate.ps1
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
 ```
+
+The setup scripts refuse to install dependencies outside the project-local
+virtual environment.
 
 ## Run
 
