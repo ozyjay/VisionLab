@@ -5,6 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 
+CAMERA_RESOLUTION_PRESETS: dict[str, tuple[int, int]] = {
+    "fast": (640, 480),
+    "quality": (1280, 720),
+}
+
 
 def _env_bool(name: str, default: bool) -> bool:
     value = os.getenv(name)
@@ -35,12 +40,26 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+def _env_choice(name: str, default: str, choices: set[str]) -> str:
+    """Read and normalise an environment variable constrained to known choices."""
+
+    value = os.getenv(name)
+    if value is None:
+        return default
+    normalised = value.strip().lower()
+    if normalised in choices:
+        return normalised
+    print(f"Warning: {name}={value!r} is unsupported; using {default}.")
+    return default
+
+
 @dataclass(slots=True)
 class AppConfig:
     """Runtime settings for the local vision demo."""
 
     camera_index: int = 0
     target_fps: int = 30
+    camera_resolution_mode: str = "fast"
     enable_object_detection: bool = False
     enable_face_detection: bool = False
     enable_vllm: bool = False
@@ -54,6 +73,8 @@ class AppConfig:
     face_model_path: str = "models/face_detection_yunet_2026may.onnx"
     captures_dir: str = "captures"
     logs_dir: str = "logs"
+    scene_state_interval_seconds: float = 0.0
+    scene_state_log_path: str = ""
 
     @classmethod
     def from_env(cls) -> "AppConfig":
@@ -62,6 +83,11 @@ class AppConfig:
         return cls(
             camera_index=_env_int("VISION_CAMERA_INDEX", 0),
             target_fps=max(1, _env_int("VISION_TARGET_FPS", 30)),
+            camera_resolution_mode=_env_choice(
+                "VISION_CAMERA_RESOLUTION_MODE",
+                "fast",
+                set(CAMERA_RESOLUTION_PRESETS),
+            ),
             enable_object_detection=_env_bool("VISION_ENABLE_OBJECT_DETECTION", False),
             enable_face_detection=_env_bool("VISION_ENABLE_FACE_DETECTION", False),
             enable_vllm=_env_bool("VISION_ENABLE_VLLM", False),
@@ -83,12 +109,26 @@ class AppConfig:
             ),
             captures_dir=os.getenv("VISION_CAPTURES_DIR", "captures"),
             logs_dir=os.getenv("VISION_LOGS_DIR", "logs"),
+            scene_state_interval_seconds=max(
+                0.0, _env_float("VISION_SCENE_STATE_INTERVAL_SECONDS", 0.0)
+            ),
+            scene_state_log_path=os.getenv("VISION_SCENE_STATE_LOG_PATH", "").strip(),
+        )
+
+    @property
+    def camera_resolution(self) -> tuple[int, int]:
+        """Return the selected camera capture resolution as ``(width, height)``."""
+
+        return CAMERA_RESOLUTION_PRESETS.get(
+            self.camera_resolution_mode,
+            CAMERA_RESOLUTION_PRESETS["fast"],
         )
 
     @property
     def active_modes(self) -> str:
         """Return a compact description of configured optional modes."""
 
+        camera_mode = f"camera:{self.camera_resolution_mode}"
         object_mode = (
             f"objects:on/{self.object_detector_backend}"
             if self.enable_object_detection
@@ -96,4 +136,4 @@ class AppConfig:
         )
         face_mode = "faces:on" if self.enable_face_detection else "faces:off"
         vllm_mode = "vLLM:on" if self.enable_vllm else "vLLM:off"
-        return f"{object_mode} | {face_mode} | {vllm_mode}"
+        return f"{camera_mode} | {object_mode} | {face_mode} | {vllm_mode}"

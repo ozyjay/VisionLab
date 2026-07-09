@@ -15,14 +15,27 @@ from typing import Any
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
+import numpy as np
+
 from .accelerator import get_torch_accelerator_status
 from .camera import Camera, check_camera, cv2
 from .config import AppConfig
 from .detectors.face_detector import FaceDetector
 from .detectors.object_detector import Detection, ObjectDetector
+from .scene_state import SceneState, build_scene_state
 
 
 WINDOW_NAME = "Local AI Vision Assistant"
+
+
+def _viewer_window_flags() -> int:
+    """Return OpenCV window flags for a resizable viewer without Qt toolbars."""
+
+    flags = cv2.WINDOW_NORMAL
+    gui_normal = getattr(cv2, "WINDOW_GUI_NORMAL", None)
+    if gui_normal is not None:
+        flags |= int(gui_normal)
+    return flags
 
 
 def _module_available(module_name: str) -> bool:
@@ -110,7 +123,7 @@ def run_health_check(config: AppConfig) -> int:
     else:
         print(f"OpenCV: available ({cv2.__version__})")
 
-    camera_status = check_camera(config.camera_index)
+    camera_status = check_camera(config.camera_index, resolution=config.camera_resolution)
     camera_label = "available" if camera_status.available else "unavailable"
     print(f"Camera: {camera_label} - {camera_status.message}")
 
@@ -140,6 +153,8 @@ def run_health_check(config: AppConfig) -> int:
     print("-" * 13)
     print(f"camera_index: {config.camera_index}")
     print(f"target_fps: {config.target_fps}")
+    print(f"camera_resolution_mode: {config.camera_resolution_mode}")
+    print(f"camera_resolution: {config.camera_resolution[0]}x{config.camera_resolution[1]}")
     print(f"enable_object_detection: {config.enable_object_detection}")
     print(f"enable_face_detection: {config.enable_face_detection}")
     print(f"enable_vllm: {config.enable_vllm}")
@@ -151,6 +166,8 @@ def run_health_check(config: AppConfig) -> int:
     print(f"object_detection_interval: {config.object_detection_interval}")
     print(f"object_device: {config.object_device}")
     print(f"face_model_path: {config.face_model_path}")
+    print(f"scene_state_interval_seconds: {config.scene_state_interval_seconds}")
+    print(f"scene_state_log_path: {config.scene_state_log_path}")
     return 0
 
 
@@ -161,9 +178,88 @@ def _draw_text(
     y: int,
     colour: tuple[int, int, int] = (255, 255, 255),
     scale: float = 0.55,
+    shadow: bool = True,
 ) -> None:
-    cv2.putText(frame, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, scale, (0, 0, 0), 3)
-    cv2.putText(frame, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, scale, colour, 1)
+    """Draw readable text without thick outline artefacts when the window scales."""
+
+    if shadow:
+        cv2.putText(
+            frame,
+            text,
+            (x + 1, y + 1),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            scale,
+            (0, 0, 0),
+            1,
+            cv2.LINE_AA,
+        )
+    cv2.putText(
+        frame,
+        text,
+        (x, y),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        scale,
+        colour,
+        1,
+        cv2.LINE_AA,
+    )
+
+
+def _truncate_text(text: str, max_chars: int) -> str:
+    """Return text shortened for fixed-width OpenCV panels."""
+
+    if len(text) <= max_chars:
+        return text
+    return text[: max(0, max_chars - 3)] + "..."
+
+
+def _draw_card(
+    frame: Any,
+    x: int,
+    y: int,
+    width: int,
+    height: int,
+    *,
+    fill: tuple[int, int, int] = (31, 34, 42),
+    border: tuple[int, int, int] = (58, 64, 78),
+) -> None:
+    """Draw a simple dashboard card."""
+
+    cv2.rectangle(frame, (x, y), (x + width, y + height), fill, -1)
+    cv2.rectangle(frame, (x, y), (x + width, y + height), border, 1)
+
+
+def _draw_chip(
+    frame: Any,
+    text: str,
+    x: int,
+    y: int,
+    *,
+    active: bool,
+    accent: tuple[int, int, int],
+) -> int:
+    """Draw a compact status chip and return its width."""
+
+    font_scale = 0.46
+    (text_width, text_height), _ = cv2.getTextSize(
+        text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, 1
+    )
+    width = text_width + 22
+    height = text_height + 14
+    fill = accent if active else (54, 58, 68)
+    text_colour = (18, 22, 26) if active else (210, 214, 222)
+    cv2.rectangle(frame, (x, y), (x + width, y + height), fill, -1)
+    cv2.rectangle(frame, (x, y), (x + width, y + height), (86, 92, 108), 1)
+    cv2.putText(
+        frame,
+        text,
+        (x + 11, y + height - 9),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        font_scale,
+        text_colour,
+        1,
+    )
+    return width
 
 
 def _save_frame(frame: Any, captures_dir: str) -> Path:
@@ -172,6 +268,43 @@ def _save_frame(frame: Any, captures_dir: str) -> Path:
     path = Path(captures_dir) / filename
     cv2.imwrite(str(path), frame)
     return path
+
+
+def _append_scene_state_log(line: str, log_path: str) -> None:
+    """Append one JSONL scene-state snapshot to an explicit log path."""
+
+    if not log_path:
+        return
+
+    path = Path(log_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(f"{line}\n")
+
+
+def _emit_scene_state(state: SceneState, log_path: str) -> None:
+    """Print a scene-state JSONL line and optionally append it to a file."""
+
+    line = state.to_jsonl()
+    print(line, flush=True)
+    if log_path:
+        try:
+            _append_scene_state_log(line, log_path)
+        except OSError as exc:
+            print(f"Warning: could not write scene-state log {log_path!r}: {exc}")
+
+
+def _scene_state_interval_due(
+    *,
+    now: float,
+    last_emit_time: float | None,
+    interval_seconds: float,
+) -> bool:
+    """Return whether interval-based scene-state output is due."""
+
+    if interval_seconds <= 0:
+        return False
+    return last_emit_time is None or now - last_emit_time >= interval_seconds
 
 
 def _object_counts(detections: list[Detection]) -> Counter[str]:
@@ -288,52 +421,169 @@ def _draw_overlay(
     privacy_blur: bool,
     show_help: bool,
     last_capture: str | None,
-) -> None:
+) -> Any:
+    """Compose a dashboard-style viewer frame around the live camera image."""
+
     height, width = frame.shape[:2]
-    panel_height = 212 if show_help else 150
-    cv2.rectangle(frame, (0, 0), (width, panel_height), (20, 20, 20), -1)
-    _draw_text(frame, "Local AI Vision Assistant - MVP 2 Object Detection", 12, 24, (120, 220, 255), 0.6)
-    _draw_text(frame, f"FPS: {fps:5.1f} | Frame: {frame_id} | Size: {width}x{height}", 12, 48)
-    _draw_text(frame, f"Modes: {config.active_modes}", 12, 72)
+    sidebar_width = 340
+    padding = 24
+    header_height = 84
+    footer_height = 74 if show_help else 42
+    content_top = header_height + padding
+    minimum_canvas_width = 1040
+    minimum_canvas_height = 620
+    canvas_width = max(minimum_canvas_width, width + sidebar_width + padding * 3)
+    canvas_height = max(minimum_canvas_height, height + header_height + footer_height + padding * 2)
+    canvas = np.full((canvas_height, canvas_width, 3), (18, 20, 24), dtype=frame.dtype)
+
+    # Header
+    cv2.rectangle(canvas, (0, 0), (canvas_width, header_height), (28, 31, 38), -1)
+    cv2.line(canvas, (0, header_height - 1), (canvas_width, header_height - 1), (58, 64, 78), 1)
+    _draw_text(canvas, "Local AI Vision Assistant", padding, 34, (245, 247, 250), 0.72)
+    _draw_text(
+        canvas,
+        f"MVP 4 · {config.camera_resolution_mode} camera mode · local scene-state JSON · no identity recognition",
+        padding,
+        60,
+        (154, 163, 178),
+        0.48,
+    )
+
+    chip_y = 24
+    chip_x = canvas_width - padding
+    chips = [
+        ("JSON", config.scene_state_interval_seconds > 0, (120, 220, 255)),
+        ("Privacy", privacy_blur, (255, 190, 90)),
+        ("Faces", face_detection_enabled, (180, 255, 180)),
+        ("Objects", object_detection_enabled, (120, 220, 255)),
+    ]
+    for text, active, colour in chips:
+        chip_width = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.46, 1)[0][0] + 22
+        chip_x -= chip_width
+        _draw_chip(canvas, text, chip_x, chip_y, active=active, accent=colour)
+        chip_x -= 8
+
+    # Main content layout.
+    content_height = canvas_height - content_top - footer_height - padding
+    video_area_width = canvas_width - sidebar_width - padding * 3
+    video_scale = min(video_area_width / width, content_height / height)
+    resized_width = max(1, int(width * video_scale))
+    resized_height = max(1, int(height * video_scale))
+    if resized_width != width or resized_height != height:
+        video = cv2.resize(frame, (resized_width, resized_height), interpolation=cv2.INTER_AREA)
+    else:
+        video = frame
+
+    video_card_x = padding
+    video_card_y = content_top
+    video_card_width = video_area_width
+    video_card_height = content_height
+    _draw_card(canvas, video_card_x, video_card_y, video_card_width, video_card_height)
+    _draw_text(canvas, "LIVE VIEW", video_card_x + 18, video_card_y + 28, (154, 163, 178), 0.45)
+    _draw_text(
+        canvas,
+        f"{width}x{height} actual · {config.camera_resolution_mode} mode · {fps:4.1f} FPS · frame {frame_id}",
+        video_card_x + 18,
+        video_card_y + 52,
+        (230, 234, 242),
+        0.52,
+    )
+
+    video_x = video_card_x + max(18, (video_card_width - resized_width) // 2)
+    video_y = video_card_y + max(66, (video_card_height - resized_height + 52) // 2)
+    canvas[video_y : video_y + resized_height, video_x : video_x + resized_width] = video
+    cv2.rectangle(
+        canvas,
+        (video_x - 1, video_y - 1),
+        (video_x + resized_width + 1, video_y + resized_height + 1),
+        (82, 92, 112),
+        1,
+    )
+
+    # Sidebar inspector.
+    panel_x = canvas_width - sidebar_width - padding
+    panel_y = content_top
+    _draw_card(canvas, panel_x, panel_y, sidebar_width, content_height)
+    _draw_text(canvas, "SCENE SUMMARY", panel_x + 18, panel_y + 30, (154, 163, 178), 0.45)
+
     counts = _object_counts(object_detections)
     count_text = ", ".join(f"{label}:{count}" for label, count in counts.most_common(4))
     if not count_text:
         count_text = "none"
-    object_status_short = object_status if len(object_status) <= 92 else object_status[:89] + "..."
-    _draw_text(
-        frame,
-        f"Objects: {'ON' if object_detection_enabled else 'OFF'} | "
-        f"detections {len(object_detections)} | counts {count_text}",
-        12,
-        96,
-        (180, 255, 180) if object_detection_enabled else (230, 230, 230),
-        0.5,
-    )
-    _draw_text(
-        frame,
-        f"Object status: {object_status_short}",
-        12,
-        120,
-        (180, 255, 180) if "ready" in object_status.lower() else (120, 220, 255),
-        0.5,
-    )
-    _draw_text(
-        frame,
-        f"Faces: {'ON' if face_detection_enabled else 'OFF'} | "
-        f"face count {len(face_detections)} | privacy blur {'ON' if privacy_blur else 'OFF'}",
-        12,
-        144,
-        (180, 255, 180) if privacy_blur else (230, 230, 230),
-        0.48,
-    )
+    face_status_short = _truncate_text(face_status, 38)
+    object_status_short = _truncate_text(object_status, 38)
 
-    if show_help:
-        face_status_short = face_status if len(face_status) <= 96 else face_status[:93] + "..."
-        _draw_text(frame, f"Face status: {face_status_short}", 12, 168, (255, 220, 160), 0.48)
-        _draw_text(frame, "Keys: q quit | s save | f face detection | o object detection | p privacy blur | h help", 12, 188, (220, 220, 255), 0.48)
+    y = panel_y + 62
+    _draw_text(
+        canvas,
+        f"Objects {'ON' if object_detection_enabled else 'OFF'}",
+        panel_x + 18,
+        y,
+        (180, 255, 180) if object_detection_enabled else (230, 230, 230),
+        0.58,
+    )
+    _draw_text(canvas, f"{len(object_detections)} detections · {count_text}", panel_x + 18, y + 26, (214, 219, 229), 0.48)
+
+    y += 68
+    _draw_text(
+        canvas,
+        f"Faces {'ON' if face_detection_enabled else 'OFF'}",
+        panel_x + 18,
+        y,
+        (180, 255, 180) if face_detection_enabled else (230, 230, 230),
+        0.58,
+    )
+    _draw_text(canvas, f"{len(face_detections)} generic faces · blur {'ON' if privacy_blur else 'OFF'}", panel_x + 18, y + 26, (214, 219, 229), 0.48)
+
+    y += 72
+    cv2.line(canvas, (panel_x + 18, y - 18), (panel_x + sidebar_width - 18, y - 18), (58, 64, 78), 1)
+    _draw_text(canvas, "PRIVACY", panel_x + 18, y, (154, 163, 178), 0.45)
+    _draw_text(canvas, "Identity recognition: disabled", panel_x + 18, y + 28, (180, 255, 180), 0.48)
+    _draw_text(canvas, "Face embeddings: not stored", panel_x + 18, y + 52, (180, 255, 180), 0.48)
+
+    y += 98
+    cv2.line(canvas, (panel_x + 18, y - 18), (panel_x + sidebar_width - 18, y - 18), (58, 64, 78), 1)
+    _draw_text(canvas, "STATUS", panel_x + 18, y, (154, 163, 178), 0.45)
+    _draw_text(canvas, f"Object: {object_status_short}", panel_x + 18, y + 28, (120, 220, 255), 0.43)
+    _draw_text(canvas, f"Face: {face_status_short}", panel_x + 18, y + 52, (255, 220, 160), 0.43)
+
+    y += 98
+    cv2.line(canvas, (panel_x + 18, y - 18), (panel_x + sidebar_width - 18, y - 18), (58, 64, 78), 1)
+    _draw_text(canvas, "ACTIONS", panel_x + 18, y, (154, 163, 178), 0.45)
+    _draw_text(canvas, "j  emit scene JSONL", panel_x + 18, y + 28, (230, 234, 242), 0.48)
+    _draw_text(canvas, "s  save displayed frame", panel_x + 18, y + 52, (230, 234, 242), 0.48)
+    _draw_text(canvas, "h  compact help", panel_x + 18, y + 76, (230, 234, 242), 0.48)
+
+    # Footer controls.
+    footer_y = canvas_height - footer_height
+    cv2.rectangle(canvas, (0, footer_y), (canvas_width, canvas_height), (28, 31, 38), -1)
+    cv2.line(canvas, (0, footer_y), (canvas_width, footer_y), (58, 64, 78), 1)
+    footer_text = (
+        "q quit   ·   f face detection   ·   o object detection   ·   p privacy blur"
+        if show_help
+        else "Press h for controls"
+    )
+    _draw_text(canvas, footer_text, padding, footer_y + 28, (214, 219, 229), 0.5)
+    _draw_text(
+        canvas,
+        f"Scene JSON: {'interval ' + str(config.scene_state_interval_seconds) + 's' if config.scene_state_interval_seconds > 0 else 'press j'}",
+        padding,
+        footer_y + 52 if show_help else footer_y + 28,
+        (120, 220, 255),
+        0.46,
+    )
 
     if last_capture:
-        _draw_text(frame, f"Saved: {last_capture}", 12, height - 16, (160, 255, 160), 0.5)
+        _draw_text(
+            canvas,
+            _truncate_text(f"Saved: {last_capture}", 58),
+            canvas_width - 430,
+            footer_y + 28,
+            (160, 255, 160),
+            0.46,
+        )
+
+    return canvas
 
 
 def run_viewer(config: AppConfig) -> int:
@@ -344,7 +594,11 @@ def run_viewer(config: AppConfig) -> int:
         print("  python -m pip install -r requirements.txt")
         return 1
 
-    camera = Camera(index=config.camera_index, target_fps=config.target_fps)
+    camera = Camera(
+        index=config.camera_index,
+        target_fps=config.target_fps,
+        resolution=config.camera_resolution,
+    )
     status = camera.open()
     if not status.available:
         print(status.message)
@@ -362,9 +616,9 @@ def run_viewer(config: AppConfig) -> int:
         device=config.object_device,
     )
     print(detector.status_message)
-    print("Keyboard controls: q quit, s save, f face detection, o object detection, p privacy blur, h help")
+    print("Keyboard controls: q quit, s save, j scene JSON, f face detection, o object detection, p privacy blur, h help")
 
-    cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
+    cv2.namedWindow(WINDOW_NAME, _viewer_window_flags())
 
     frame_id = 0
     fps = 0.0
@@ -377,6 +631,7 @@ def run_viewer(config: AppConfig) -> int:
     privacy_blur = False
     show_help = True
     frame_delay = 1.0 / max(1, config.target_fps)
+    last_scene_state_emit: float | None = None
 
     try:
         while True:
@@ -417,7 +672,7 @@ def run_viewer(config: AppConfig) -> int:
 
             _draw_object_detections(frame, object_detections)
 
-            _draw_overlay(
+            display_frame = _draw_overlay(
                 frame,
                 fps,
                 frame_id,
@@ -433,12 +688,12 @@ def run_viewer(config: AppConfig) -> int:
                 last_capture,
             )
 
-            cv2.imshow(WINDOW_NAME, frame)
+            cv2.imshow(WINDOW_NAME, display_frame)
             key = cv2.waitKey(1) & 0xFF
             if key == ord("q"):
                 break
             if key == ord("s"):
-                path = _save_frame(frame, config.captures_dir)
+                path = _save_frame(display_frame, config.captures_dir)
                 last_capture = str(path)
                 print(f"Saved frame to {path}")
             elif key == ord("f"):
@@ -466,6 +721,24 @@ def run_viewer(config: AppConfig) -> int:
                     print("Privacy blur needs face detection, but no usable detector is available.")
             elif key == ord("h"):
                 show_help = not show_help
+
+            interval_check_time = time.perf_counter()
+            should_emit_scene_state = key == ord("j") or _scene_state_interval_due(
+                now=interval_check_time,
+                last_emit_time=last_scene_state_emit,
+                interval_seconds=config.scene_state_interval_seconds,
+            )
+            if should_emit_scene_state:
+                state = build_scene_state(
+                    frame_id=frame_id,
+                    fps=fps,
+                    object_detections=object_detections,
+                    face_detections=face_detections,
+                    face_detection_enabled=face_detection_enabled,
+                    privacy_blur_enabled=privacy_blur,
+                )
+                _emit_scene_state(state, config.scene_state_log_path)
+                last_scene_state_emit = interval_check_time
 
             spent = time.perf_counter() - loop_start
             if spent < frame_delay:

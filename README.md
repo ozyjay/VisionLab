@@ -1,17 +1,18 @@
 # Local AI Vision Assistant
 
 Local-first computer-vision demo for a Framework Desktop with AMD/ROCm-friendly
-fallbacks. The current implementation covers **MVP 0**, **MVP 1**, and
-**MVP 2**:
+fallbacks. The current implementation covers **MVP 0** through **MVP 4**:
 
 - environment and camera health checks
-- webcam viewer with FPS and frame-size overlay
+- dashboard-style webcam viewer with FPS, frame size, and scene summary panels
 - resizable viewer window
 - keyboard controls for capture, object detection, and privacy modes
 - optional Ultralytics YOLO object detection with CPU-first defaults
 - ROCm-aware GPU mode helpers for Framework Desktop
 - non-identifying OpenCV face detection and privacy blur
 - cached object detections between inference frames for smoother display
+- on-demand JSONL scene-state snapshots for objects, generic face counts, FPS,
+  frame ID, timestamp, and privacy settings
 - resilient behaviour when optional GPU/model dependencies are unavailable
 
 The app does **not** identify people, compute or store face embeddings, store
@@ -31,7 +32,7 @@ src/
 docs/
 scripts/
 captures/   # created when saving frames
-logs/       # reserved for later JSONL scene-state logging
+logs/       # optional JSONL scene-state logs
 ```
 
 ## Install
@@ -144,24 +145,33 @@ Configuration is loaded from environment variables:
 | --- | --- | --- |
 | `VISION_CAMERA_INDEX` | `0` | OpenCV camera index |
 | `VISION_TARGET_FPS` | `30` | Target display FPS |
+| `VISION_CAMERA_RESOLUTION_MODE` | `fast` | Camera preset: `fast` = 640x480, `quality` = 1280x720 |
 | `VISION_ENABLE_OBJECT_DETECTION` | `false` | Start with object detection enabled |
 | `VISION_OBJECT_MODEL_PATH` | `models/yolo11n.pt` | Local YOLO model file |
 | `VISION_OBJECT_DETECTOR_BACKEND` | `ultralytics` | Object backend: `ultralytics`, `auto`, or `none` |
 | `VISION_OBJECT_CONFIDENCE_THRESHOLD` | `0.35` | Minimum detection confidence |
 | `VISION_OBJECT_DETECTION_INTERVAL` | `3` | Run object inference every N frames |
 | `VISION_OBJECT_DEVICE` | `cpu` | Ultralytics/Torch device: `cpu`, `auto`, `rocm`, or `cuda:0` |
-| `VISION_ENABLE_FACE_DETECTION` | `false` | Face overlay placeholder for MVP 1 |
+| `VISION_ENABLE_FACE_DETECTION` | `false` | Start with non-identifying face detection enabled |
 | `VISION_ENABLE_VLLM` | `false` | Enable vLLM health check |
 | `VISION_VLLM_BASE_URL` | `http://localhost:8000/v1` | OpenAI-compatible vLLM base URL |
 | `VISION_VLLM_MODEL` | `local-model` | Future vLLM model name |
 | `VISION_FACE_MODEL_PATH` | `models/face_detection_yunet_2026may.onnx` | Local OpenCV YuNet face detector |
 | `VISION_CAPTURES_DIR` | `captures` | Saved frame directory |
-| `VISION_LOGS_DIR` | `logs` | Future scene-state log directory |
+| `VISION_LOGS_DIR` | `logs` | Reserved log directory |
+| `VISION_SCENE_STATE_INTERVAL_SECONDS` | `0` | Print JSONL scene-state snapshots every N seconds; `0` disables interval output |
+| `VISION_SCENE_STATE_LOG_PATH` | empty | Optional JSONL file path to append emitted scene-state snapshots |
 
 Example:
 
 ```bash
 VISION_CAMERA_INDEX=1 VISION_TARGET_FPS=15 python -m src.main run
+```
+
+Use the quality camera preset when detection detail matters more than speed:
+
+```powershell
+pwsh -File scripts/run-gpu.ps1 -ResolutionMode quality
 ```
 
 ## Keyboard controls
@@ -170,10 +180,21 @@ VISION_CAMERA_INDEX=1 VISION_TARGET_FPS=15 python -m src.main run
 | --- | --- |
 | `q` | Quit |
 | `s` | Save current displayed frame to `captures/` |
+| `j` | Print one scene-state JSONL snapshot |
 | `f` | Toggle non-identifying face detection |
 | `o` | Toggle object detection on or off |
 | `p` | Toggle privacy blur for detected faces |
 | `h` | Show or hide help |
+
+## Scene-state JSONL
+
+Press `j` in the viewer to print one compact JSON line to stdout. Set
+`VISION_SCENE_STATE_INTERVAL_SECONDS` to a positive number to print snapshots
+automatically at that cadence. Set `VISION_SCENE_STATE_LOG_PATH` to also append
+emitted snapshots to a JSONL file.
+
+Scene-state snapshots include counts and bounding boxes only. They do not
+include image pixels, face crops, identities, embeddings, or cloud calls.
 
 ## Privacy notes
 
@@ -201,5 +222,5 @@ pwsh -File scripts/download-face-detector.ps1
 
 ## Next MVP
 
-Next step: **MVP 4 — Scene-state summaries**. Summarise visible objects and
-generic face counts without identity recognition or face embedding storage.
+Next step: **MVP 5 — vLLM scene explanation**. Send compact scene state to a
+local OpenAI-compatible vLLM endpoint with privacy-aware prompts.

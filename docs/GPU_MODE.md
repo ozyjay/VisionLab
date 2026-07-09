@@ -52,12 +52,19 @@ Defaults:
 
 - model: `models/yolo11s.pt`
 - device: `auto`
+- camera resolution mode: `fast` (`640x480`)
 - object detection: enabled
 
 To run a bigger model:
 
 ```powershell
 pwsh -File scripts/run-gpu.ps1 -ModelPath models/yolo11m.pt
+```
+
+To trade speed for more detection detail:
+
+```powershell
+pwsh -File scripts/run-gpu.ps1 -ResolutionMode quality
 ```
 
 To include local non-identifying face detection:

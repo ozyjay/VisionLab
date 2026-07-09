@@ -36,6 +36,9 @@ before adding the next layer.
 - Combine detections into a structured scene-state object.
 - Include counts, detections, FPS, timestamp, frame ID, and privacy settings.
 - Print or log JSONL snapshots on demand or at a configured interval.
+- Status: implemented with `j` for on-demand stdout output, optional interval
+  output via `VISION_SCENE_STATE_INTERVAL_SECONDS`, and optional file append via
+  `VISION_SCENE_STATE_LOG_PATH`.
 
 ## MVP 5 — vLLM scene explanation
 

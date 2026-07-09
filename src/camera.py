@@ -23,9 +23,15 @@ class CameraStatus:
 class Camera:
     """Small wrapper around ``cv2.VideoCapture``."""
 
-    def __init__(self, index: int = 0, target_fps: int = 30) -> None:
+    def __init__(
+        self,
+        index: int = 0,
+        target_fps: int = 30,
+        resolution: tuple[int, int] | None = None,
+    ) -> None:
         self.index = index
         self.target_fps = target_fps
+        self.resolution = resolution
         self.capture: Any | None = None
 
     def open(self) -> CameraStatus:
@@ -39,8 +45,20 @@ class Camera:
             self.release()
             return CameraStatus(False, f"Camera index {self.index} could not be opened.")
 
+        if self.resolution is not None:
+            width, height = self.resolution
+            self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, float(width))
+            self.capture.set(cv2.CAP_PROP_FRAME_HEIGHT, float(height))
         self.capture.set(cv2.CAP_PROP_FPS, float(self.target_fps))
-        return CameraStatus(True, f"Camera index {self.index} opened.")
+
+        actual_width = int(self.capture.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
+        actual_height = int(self.capture.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
+        resolution_label = (
+            f" at {actual_width}x{actual_height}"
+            if actual_width > 0 and actual_height > 0
+            else ""
+        )
+        return CameraStatus(True, f"Camera index {self.index} opened{resolution_label}.")
 
     def read(self) -> tuple[bool, Any | None]:
         """Read one frame from the camera."""
@@ -58,10 +76,13 @@ class Camera:
             self.capture = None
 
 
-def check_camera(index: int = 0) -> CameraStatus:
+def check_camera(
+    index: int = 0,
+    resolution: tuple[int, int] | None = None,
+) -> CameraStatus:
     """Return whether a camera can be opened, without raising on failure."""
 
-    camera = Camera(index=index)
+    camera = Camera(index=index, resolution=resolution)
     status = camera.open()
     camera.release()
     return status
