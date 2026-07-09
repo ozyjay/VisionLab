@@ -119,7 +119,7 @@ Configuration is loaded from environment variables:
 | `VISION_OBJECT_MODEL_PATH` | `models/yolo11n.pt` | Local YOLO model file |
 | `VISION_OBJECT_DETECTOR_BACKEND` | `ultralytics` | Object backend: `ultralytics`, `yoloe`, `auto`, or `none` |
 | `VISION_OBJECT_PROMPTS` | empty | Comma-separated YOLOE classes, for example `phone,keys,wallet` |
-| `VISION_OBJECT_CONFIDENCE_THRESHOLD` | `0.35` | Minimum detection confidence |
+| `VISION_OBJECT_CONFIDENCE_THRESHOLD` | `0.35` | Initial minimum detection confidence; adjustable at runtime in the viewer and browser dashboard |
 | `VISION_OBJECT_DETECTION_INTERVAL` | `3` | Run object inference every N frames |
 | `VISION_OBJECT_DETECTION_HOLD_FRAMES` | `8` | Keep previous boxes briefly when a detector frame returns empty, reducing demo flicker |
 | `VISION_OBJECT_DEVICE` | `cpu` | Ultralytics/Torch device: `cpu`, `auto`, `rocm`, or `cuda:0` |
@@ -157,6 +157,7 @@ pwsh -File scripts/run-gpu.ps1 -ResolutionMode quality
 | `f` | Toggle non-identifying face detection |
 | `o` | Toggle object detection on or off |
 | `p` | Toggle privacy blur for detected faces |
+| `[` / `]` | Lower or raise the object confidence threshold |
 | `h` | Show or hide help |
 
 The right-hand panel includes concise commentary for demo audiences, including
@@ -165,7 +166,7 @@ protections are in force.
 
 ## Scene-state JSONL
 
-Press `j` in the viewer to print one compact JSON line to stdout. Set
+Use `j` in the viewer to print one compact JSON line to stdout. Set
 `VISION_SCENE_STATE_INTERVAL_SECONDS` to a positive number to print snapshots
 automatically at that cadence. Set `VISION_SCENE_STATE_LOG_PATH` to also append
 emitted snapshots to a JSONL file.
@@ -178,7 +179,7 @@ include image pixels, face crops, identities, embeddings, or cloud calls.
 - Face identity recognition is **not implemented**.
 - Face embeddings are **not implemented or stored**.
 - Face detection only draws generic boxes and counts visible faces.
-- Saved frames are only written when you press `s`.
+- Saved frames are only written via `s`.
 - Privacy blur runs locally on detected face regions without identifying people.
 
 To enable face detection, download OpenCV Zoo's YuNet detector:

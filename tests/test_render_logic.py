@@ -7,8 +7,10 @@ import numpy as np
 from src.config import AppConfig
 from src.detectors.object_detector import Detection
 from src.main import (
+    _WebDashboardRuntime,
     _backend_for_model_path,
     _build_demo_commentary,
+    _clamp_confidence_threshold,
     _dashboard_html,
     _draw_overlay,
     _normalise_prompt_text,
@@ -68,6 +70,8 @@ class RenderLogicTests(unittest.TestCase):
         self.assertIn("modelSelect", html)
         self.assertIn("promptEditor", html)
         self.assertIn("/prompts", html)
+        self.assertIn("confidenceSlider", html)
+        self.assertIn("/confidence", html)
 
     def test_dashboard_model_selector_is_above_live_detection_sections(self) -> None:
         html = _dashboard_html()
@@ -80,6 +84,20 @@ class RenderLogicTests(unittest.TestCase):
             _normalise_prompt_text(" person, pen ,, mobile phone,watch "),
             ["person", "pen", "mobile phone", "watch"],
         )
+
+    def test_confidence_threshold_is_clamped(self) -> None:
+        self.assertEqual(_clamp_confidence_threshold(-0.5), 0.0)
+        self.assertEqual(_clamp_confidence_threshold(1.5), 1.0)
+        self.assertEqual(_clamp_confidence_threshold(0.45), 0.45)
+
+    def test_web_runtime_confidence_threshold_updates_state(self) -> None:
+        runtime = _WebDashboardRuntime(AppConfig(object_confidence_threshold=0.35))
+
+        result = runtime.set_confidence_threshold("0.7")
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(runtime.config.object_confidence_threshold, 0.7)
+        self.assertEqual(runtime.state()["object_confidence_threshold"], 0.7)
 
     def test_backend_for_model_path_auto_detects_yoloe(self) -> None:
         self.assertEqual(

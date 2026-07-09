@@ -536,6 +536,26 @@ def _normalise_prompt_text(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
+def _clamp_confidence_threshold(value: float) -> float:
+    """Clamp a detector confidence threshold to the supported range."""
+
+    return min(1.0, max(0.0, float(value)))
+
+
+def _set_detector_confidence_threshold(
+    detector: ObjectDetector,
+    confidence_threshold: float,
+) -> None:
+    """Update an object detector threshold without reloading the model."""
+
+    previous = detector.confidence_threshold
+    detector.confidence_threshold = _clamp_confidence_threshold(confidence_threshold)
+    previous_text = f"confidence>={previous:.2f}"
+    current_text = f"confidence>={detector.confidence_threshold:.2f}"
+    if previous_text in detector.status_message:
+        detector.status_message = detector.status_message.replace(previous_text, current_text)
+
+
 def _object_counts(detections: list[Detection]) -> Counter[str]:
     return Counter(detection.label for detection in detections if detection.source == "object")
 
@@ -854,13 +874,21 @@ def _draw_overlay(
     _draw_text(canvas, "STATUS", panel_x + 18, status_y, (154, 163, 178), 0.45)
     _draw_text(canvas, f"Object: {object_status_short}", panel_x + 18, status_y + 28, (120, 220, 255), 0.43)
     _draw_text(canvas, f"Face: {face_status_short}", panel_x + 18, status_y + 52, (255, 220, 160), 0.43)
+    _draw_text(
+        canvas,
+        f"Confidence: {config.object_confidence_threshold:.2f}",
+        panel_x + 18,
+        status_y + 76,
+        (214, 219, 229),
+        0.43,
+    )
 
     # Footer controls.
     footer_y = canvas_height - footer_height
     cv2.rectangle(canvas, (0, footer_y), (canvas_width, canvas_height), (28, 31, 38), -1)
     cv2.line(canvas, (0, footer_y), (canvas_width, footer_y), (58, 64, 78), 1)
     footer_text = (
-        "q quit   ·   f face detection   ·   o object detection   ·   p privacy blur"
+        "q quit   ·   f faces   ·   o objects   ·   p blur   ·   [ ] confidence"
         if show_help
         else "H shows controls"
     )
@@ -1012,6 +1040,11 @@ def _dashboard_html() -> str:
       color: var(--text);
       padding: 10px 12px;
     }
+    input[type="range"] {
+      width: 100%;
+      accent-color: var(--accent);
+      margin-top: 12px;
+    }
     textarea {
       width: 100%;
       min-height: 84px;
@@ -1061,6 +1094,11 @@ def _dashboard_html() -> str:
           <button onclick="resetPromptEditor()">Reset from detector</button>
           <button onclick="applyPrompts()">Apply prompts</button>
         </div>
+      </section>
+      <section class="section">
+        <div class="label">Object confidence</div>
+        <div class="sub" id="confidenceValue">Minimum confidence: 35%</div>
+        <input id="confidenceSlider" type="range" min="0.05" max="0.95" step="0.05" value="0.35" onchange="applyConfidence(this.value)">
       </section>
       <section class="section">
         <div class="row">
@@ -1127,6 +1165,10 @@ def _dashboard_html() -> str:
           state.commentary.map(line => `<div>${escapeHtml(line)}</div>`).join('');
         document.getElementById('modelStatus').textContent =
           `${state.current_model_path} · ${state.current_backend}`;
+        const confidence = Number(state.object_confidence_threshold);
+        document.getElementById('confidenceValue').textContent =
+          `Minimum confidence: ${(confidence * 100).toFixed(0)}%`;
+        document.getElementById('confidenceSlider').value = confidence.toFixed(2);
         if (!promptEditorDirty) {
           document.getElementById('promptEditor').value = state.object_prompts.join(', ');
         }
@@ -1158,6 +1200,11 @@ def _dashboard_html() -> str:
     }
     async function resetPromptEditor() {
       promptEditorDirty = false;
+      await refreshState();
+    }
+    async function applyConfidence(value) {
+      const body = new URLSearchParams({threshold: value});
+      await fetch('/confidence', {method: 'POST', body});
       await refreshState();
     }
     async function toggleMode(name) {
@@ -1256,6 +1303,33 @@ class _WebDashboardRuntime:
             "backend": self.current_backend,
         }
 
+    def set_confidence_threshold(self, value: str) -> dict[str, Any]:
+        """Apply a new object confidence threshold at runtime."""
+
+        try:
+            threshold = _clamp_confidence_threshold(float(value))
+        except ValueError:
+            threshold = self.config.object_confidence_threshold
+
+        with self.detector_lock:
+            detector = self.detector
+            if detector is not None:
+                _set_detector_confidence_threshold(detector, threshold)
+                detector_status = detector.status_message
+            else:
+                detector_status = self.object_status
+
+        with self.lock:
+            self.config.object_confidence_threshold = threshold
+            self.object_detections = []
+            self.object_status = detector_status
+
+        return {
+            "ok": True,
+            "threshold": threshold,
+            "status": detector_status,
+        }
+
     def switch_model(self, model_path: str) -> dict[str, Any]:
         """Switch to a local model file and return status details."""
 
@@ -1299,6 +1373,7 @@ class _WebDashboardRuntime:
                 "current_model_path": self.current_model_path,
                 "current_backend": self.current_backend,
                 "object_prompts": list(self.current_prompts),
+                "object_confidence_threshold": self.config.object_confidence_threshold,
             }
 
     def emit_jsonl(self) -> None:
@@ -1567,6 +1642,17 @@ def _make_dashboard_handler(runtime: _WebDashboardRuntime) -> type[BaseHTTPReque
                 self.wfile.write(payload)
                 return
 
+            if parsed.path == "/confidence":
+                threshold = self._post_params().get("threshold", [""])[0]
+                payload = json.dumps(runtime.set_confidence_threshold(threshold)).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+                return
+
             self.send_error(404)
 
     return DashboardHandler
@@ -1628,7 +1714,10 @@ def run_viewer(config: AppConfig) -> int:
         device=config.object_device,
     )
     print(detector.status_message)
-    print("Keyboard controls: q quit, s save, j scene JSON, f face detection, o object detection, p privacy blur, h help")
+    print(
+        "Keyboard controls: q quit, s save, j scene JSON, f face detection, "
+        "o object detection, p privacy blur, [ ] confidence, h help"
+    )
 
     cv2.namedWindow(WINDOW_NAME, _viewer_window_flags())
 
@@ -1747,6 +1836,18 @@ def run_viewer(config: AppConfig) -> int:
                 print(f"Privacy blur: {'ON' if privacy_blur else 'OFF'}")
                 if privacy_blur and not face_detector.available:
                     print("Privacy blur needs a usable local face detector, but the face-box display toggle can stay off.")
+            elif key in {ord("["), ord("]")}:
+                delta = -0.05 if key == ord("[") else 0.05
+                config.object_confidence_threshold = _clamp_confidence_threshold(
+                    config.object_confidence_threshold + delta
+                )
+                _set_detector_confidence_threshold(
+                    detector,
+                    config.object_confidence_threshold,
+                )
+                object_detections = []
+                last_object_detection_frame = None
+                print(f"Object confidence threshold: {config.object_confidence_threshold:.2f}")
             elif key == ord("h"):
                 show_help = not show_help
 
