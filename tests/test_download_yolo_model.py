@@ -26,6 +26,20 @@ class DownloadYoloModelTests(unittest.TestCase):
             "yolo11m.pt",
         )
 
+    def test_yoloe_aliases_resolve_to_yoloe_26_filenames(self) -> None:
+        self.assertEqual(
+            download_yolo_model.resolve_model_name("yoloe-s"),
+            "yoloe-26s-seg.pt",
+        )
+        self.assertEqual(
+            download_yolo_model.resolve_model_name("yoloe-medium"),
+            "yoloe-26m-seg.pt",
+        )
+        self.assertEqual(
+            download_yolo_model.resolve_model_name("yoloe-prompt-free"),
+            "yoloe-26s-seg-pf.pt",
+        )
+
     def test_paths_are_rejected(self) -> None:
         with self.assertRaises(ValueError):
             download_yolo_model.resolve_model_name("models/yolo11m.pt")

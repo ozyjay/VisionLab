@@ -2,4 +2,8 @@
 #
 # Keep these separate from the base requirements so the webcam viewer and health
 # check remain lightweight and usable even when YOLO/PyTorch cannot be installed.
+# Upgrade this package when trying newly released YOLOE model families.
 ultralytics>=8.3
+
+# YOLOE text-prompt support currently imports Ultralytics' CLIP fork.
+git+https://github.com/ultralytics/CLIP.git

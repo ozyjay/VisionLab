@@ -80,8 +80,11 @@ def _check_object_detector(config: AppConfig) -> list[str]:
     lines = [
         f"Object detector backend: {config.object_detector_backend}",
         f"Object detector model: {config.object_model_path}",
+        "Object detector prompts: "
+        + (", ".join(config.object_prompts or []) if config.object_prompts else "none"),
         f"Object confidence threshold: {config.object_confidence_threshold:.2f}",
         f"Object detection interval: every {config.object_detection_interval} frame(s)",
+        f"Object detection hold: {config.object_detection_hold_frames} frame(s)",
         f"Object detector requested device: {config.object_device}",
         f"Object detector resolved device: {accelerator.resolved_device}",
         f"Object accelerator backend: {accelerator.backend}",
@@ -162,8 +165,10 @@ def run_health_check(config: AppConfig) -> int:
     print(f"vllm_model: {config.vllm_model}")
     print(f"object_model_path: {config.object_model_path}")
     print(f"object_detector_backend: {config.object_detector_backend}")
+    print(f"object_prompts: {', '.join(config.object_prompts or [])}")
     print(f"object_confidence_threshold: {config.object_confidence_threshold}")
     print(f"object_detection_interval: {config.object_detection_interval}")
+    print(f"object_detection_hold_frames: {config.object_detection_hold_frames}")
     print(f"object_device: {config.object_device}")
     print(f"face_model_path: {config.face_model_path}")
     print(f"scene_state_interval_seconds: {config.scene_state_interval_seconds}")
@@ -205,6 +210,75 @@ def _draw_text(
     )
 
 
+def _draw_rounded_box(
+    frame: Any,
+    x: int,
+    y: int,
+    width: int,
+    height: int,
+    *,
+    radius: int = 14,
+    fill: tuple[int, int, int] = (31, 34, 42),
+    border: tuple[int, int, int] | None = (58, 64, 78),
+    alpha: float = 1.0,
+) -> None:
+    """Draw a rounded rectangle with optional alpha blending."""
+
+    radius = max(0, min(radius, width // 2, height // 2))
+    target = frame
+    overlay = frame.copy() if alpha < 1.0 else frame
+
+    # Filled rounded box.
+    cv2.rectangle(overlay, (x + radius, y), (x + width - radius, y + height), fill, -1)
+    cv2.rectangle(overlay, (x, y + radius), (x + width, y + height - radius), fill, -1)
+    cv2.circle(overlay, (x + radius, y + radius), radius, fill, -1, cv2.LINE_AA)
+    cv2.circle(overlay, (x + width - radius, y + radius), radius, fill, -1, cv2.LINE_AA)
+    cv2.circle(overlay, (x + radius, y + height - radius), radius, fill, -1, cv2.LINE_AA)
+    cv2.circle(
+        overlay,
+        (x + width - radius, y + height - radius),
+        radius,
+        fill,
+        -1,
+        cv2.LINE_AA,
+    )
+
+    if alpha < 1.0:
+        cv2.addWeighted(overlay, alpha, target, 1.0 - alpha, 0, target)
+
+    if border is not None:
+        cv2.rectangle(
+            frame,
+            (x + radius, y),
+            (x + width - radius, y + height),
+            border,
+            1,
+            cv2.LINE_AA,
+        )
+        cv2.rectangle(
+            frame,
+            (x, y + radius),
+            (x + width, y + height - radius),
+            border,
+            1,
+            cv2.LINE_AA,
+        )
+        cv2.ellipse(frame, (x + radius, y + radius), (radius, radius), 180, 0, 90, border, 1, cv2.LINE_AA)
+        cv2.ellipse(frame, (x + width - radius, y + radius), (radius, radius), 270, 0, 90, border, 1, cv2.LINE_AA)
+        cv2.ellipse(frame, (x + radius, y + height - radius), (radius, radius), 90, 0, 90, border, 1, cv2.LINE_AA)
+        cv2.ellipse(
+            frame,
+            (x + width - radius, y + height - radius),
+            (radius, radius),
+            0,
+            0,
+            90,
+            border,
+            1,
+            cv2.LINE_AA,
+        )
+
+
 def _truncate_text(text: str, max_chars: int) -> str:
     """Return text shortened for fixed-width OpenCV panels."""
 
@@ -223,10 +297,19 @@ def _draw_card(
     fill: tuple[int, int, int] = (31, 34, 42),
     border: tuple[int, int, int] = (58, 64, 78),
 ) -> None:
-    """Draw a simple dashboard card."""
+    """Draw a polished dashboard card."""
 
-    cv2.rectangle(frame, (x, y), (x + width, y + height), fill, -1)
-    cv2.rectangle(frame, (x, y), (x + width, y + height), border, 1)
+    _draw_rounded_box(
+        frame,
+        x,
+        y,
+        width,
+        height,
+        radius=18,
+        fill=fill,
+        border=border,
+        alpha=0.96,
+    )
 
 
 def _draw_chip(
@@ -248,8 +331,17 @@ def _draw_chip(
     height = text_height + 14
     fill = accent if active else (54, 58, 68)
     text_colour = (18, 22, 26) if active else (210, 214, 222)
-    cv2.rectangle(frame, (x, y), (x + width, y + height), fill, -1)
-    cv2.rectangle(frame, (x, y), (x + width, y + height), (86, 92, 108), 1)
+    _draw_rounded_box(
+        frame,
+        x,
+        y,
+        width,
+        height,
+        radius=height // 2,
+        fill=fill,
+        border=(86, 92, 108),
+        alpha=0.94,
+    )
     cv2.putText(
         frame,
         text,
@@ -258,6 +350,7 @@ def _draw_chip(
         font_scale,
         text_colour,
         1,
+        cv2.LINE_AA,
     )
     return width
 
@@ -307,8 +400,185 @@ def _scene_state_interval_due(
     return last_emit_time is None or now - last_emit_time >= interval_seconds
 
 
+def _wrap_text(text: str, max_width: int, scale: float = 0.45) -> list[str]:
+    """Wrap text into OpenCV-renderable lines that fit a pixel width."""
+
+    words = text.split()
+    if not words:
+        return [""]
+
+    lines: list[str] = []
+    current = words[0]
+    for word in words[1:]:
+        candidate = f"{current} {word}"
+        text_width = cv2.getTextSize(candidate, cv2.FONT_HERSHEY_SIMPLEX, scale, 1)[0][0]
+        if text_width <= max_width:
+            current = candidate
+        else:
+            lines.append(current)
+            current = word
+    lines.append(current)
+    return lines
+
+
+def _draw_text_block(
+    frame: Any,
+    lines: list[str],
+    x: int,
+    y: int,
+    max_width: int,
+    *,
+    colour: tuple[int, int, int] = (214, 219, 229),
+    scale: float = 0.45,
+    line_height: int = 22,
+) -> int:
+    """Draw wrapped text lines and return the next y coordinate."""
+
+    cursor_y = y
+    for line in lines:
+        for wrapped in _wrap_text(line, max_width, scale):
+            _draw_text(frame, wrapped, x, cursor_y, colour, scale)
+            cursor_y += line_height
+    return cursor_y
+
+
+def _draw_fixed_text_rows(
+    frame: Any,
+    lines: list[str],
+    x: int,
+    y: int,
+    max_width: int,
+    row_count: int,
+    *,
+    colour: tuple[int, int, int] = (214, 219, 229),
+    scale: float = 0.43,
+    row_height: int = 24,
+) -> None:
+    """Draw text into fixed-height rows so the dashboard does not reflow."""
+
+    for index in range(row_count):
+        text = lines[index] if index < len(lines) else ""
+        wrapped = _wrap_text(text, max_width, scale)
+        stable_text = _truncate_text(wrapped[0] if wrapped else "", 64)
+        _draw_text(frame, stable_text, x, y + index * row_height, colour, scale)
+
+
+def _build_demo_commentary(
+    *,
+    config: AppConfig,
+    face_detection_enabled: bool,
+    face_detections: list[Detection],
+    object_detection_enabled: bool,
+    object_detections: list[Detection],
+    privacy_blur: bool,
+    object_status: str,
+) -> list[str]:
+    """Return concise live commentary for demo audiences."""
+
+    commentary: list[str] = []
+    if object_detection_enabled:
+        if object_detections:
+            counts = _object_counts(object_detections)
+            summary = ", ".join(
+                f"{label} x{count}" for label, count in counts.most_common(3)
+            )
+            commentary.append(f"Object detector is tracking: {summary}.")
+        elif "ready" in object_status.lower():
+            commentary.append(
+                f"Object detector is running every {config.object_detection_interval} frame(s), but has no confident boxes yet."
+            )
+        else:
+            commentary.append("Object detection is enabled, but the selected backend is not ready.")
+    else:
+        commentary.append("Object detection is paused; press o to enable it.")
+
+    if config.object_detector_backend == "yoloe" or config.object_model_path.lower().endswith("-seg.pt"):
+        prompts = ", ".join((config.object_prompts or [])[:5])
+        commentary.append(
+            f"YOLOE is using text prompts: {prompts}."
+            if prompts
+            else "YOLOE works best when you provide object prompts."
+        )
+
+    if face_detection_enabled:
+        commentary.append(
+            f"Face mode counts generic faces only: {len(face_detections)} visible."
+        )
+    elif privacy_blur:
+        commentary.append("Face box display is off; blur still uses local face boxes internally.")
+    else:
+        commentary.append("Face box display is off; press f to show generic face boxes.")
+
+    if privacy_blur:
+        commentary.append("Privacy blur is active; face regions are blurred locally before display.")
+    else:
+        commentary.append("Identity recognition and face embeddings remain disabled.")
+
+    if config.scene_state_interval_seconds > 0:
+        commentary.append(
+            f"Scene JSONL is emitted every {config.scene_state_interval_seconds:g}s."
+        )
+    else:
+        commentary.append("Press j to emit a compact scene-state JSONL snapshot.")
+
+    return commentary
+
+
 def _object_counts(detections: list[Detection]) -> Counter[str]:
     return Counter(detection.label for detection in detections if detection.source == "object")
+
+
+def _detection_colour(label: str) -> tuple[int, int, int]:
+    """Return a stable bright BGR colour for a detection label."""
+
+    palette = [
+        (80, 220, 120),
+        (120, 220, 255),
+        (255, 190, 90),
+        (190, 150, 255),
+        (255, 120, 170),
+        (120, 255, 210),
+    ]
+    index = sum(ord(char) for char in label) % len(palette)
+    return palette[index]
+
+
+def _draw_detection_label(
+    frame: Any,
+    label: str,
+    x: int,
+    y: int,
+    colour: tuple[int, int, int],
+) -> None:
+    """Draw a readable semi-transparent detection label."""
+
+    (text_width, text_height), _ = cv2.getTextSize(
+        label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1
+    )
+    box_width = text_width + 12
+    box_height = text_height + 12
+    label_y = max(0, y - box_height - 6)
+    _draw_rounded_box(
+        frame,
+        x,
+        label_y,
+        box_width,
+        box_height,
+        radius=7,
+        fill=colour,
+        border=None,
+        alpha=0.86,
+    )
+    cv2.putText(
+        frame,
+        label,
+        (x + 6, label_y + box_height - 7),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.5,
+        (10, 12, 16),
+        1,
+        cv2.LINE_AA,
+    )
 
 
 def _draw_object_detections(frame: Any, detections: list[Detection]) -> None:
@@ -327,24 +597,19 @@ def _draw_object_detections(frame: Any, detections: list[Detection]) -> None:
         if x2 <= x1 or y2 <= y1:
             continue
 
-        colour = (80, 220, 80)
-        cv2.rectangle(frame, (x1, y1), (x2, y2), colour, 2)
+        colour = _detection_colour(detection.label)
+        cv2.rectangle(frame, (x1, y1), (x2, y2), colour, 2, cv2.LINE_AA)
+        corner = max(8, min(24, (x2 - x1) // 6, (y2 - y1) // 6))
+        cv2.line(frame, (x1, y1), (x1 + corner, y1), colour, 4, cv2.LINE_AA)
+        cv2.line(frame, (x1, y1), (x1, y1 + corner), colour, 4, cv2.LINE_AA)
+        cv2.line(frame, (x2, y1), (x2 - corner, y1), colour, 4, cv2.LINE_AA)
+        cv2.line(frame, (x2, y1), (x2, y1 + corner), colour, 4, cv2.LINE_AA)
+        cv2.line(frame, (x1, y2), (x1 + corner, y2), colour, 4, cv2.LINE_AA)
+        cv2.line(frame, (x1, y2), (x1, y2 - corner), colour, 4, cv2.LINE_AA)
+        cv2.line(frame, (x2, y2), (x2 - corner, y2), colour, 4, cv2.LINE_AA)
+        cv2.line(frame, (x2, y2), (x2, y2 - corner), colour, 4, cv2.LINE_AA)
         label = f"{detection.label} {detection.confidence:.2f}"
-        (text_width, text_height), _ = cv2.getTextSize(
-            label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1
-        )
-        label_y1 = max(0, y1 - text_height - 8)
-        label_y2 = max(text_height + 8, y1)
-        cv2.rectangle(frame, (x1, label_y1), (x1 + text_width + 8, label_y2), colour, -1)
-        cv2.putText(
-            frame,
-            label,
-            (x1 + 4, label_y2 - 5),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.5,
-            (0, 0, 0),
-            1,
-        )
+        _draw_detection_label(frame, label, x1, y1, colour)
 
 
 def _draw_face_detections(frame: Any, detections: list[Detection]) -> None:
@@ -366,17 +631,8 @@ def _draw_face_detections(frame: Any, detections: list[Detection]) -> None:
 
         face_index += 1
         colour = (255, 190, 90)
-        cv2.rectangle(frame, (x1, y1), (x2, y2), colour, 2)
-        label = f"face {face_index}"
-        cv2.putText(
-            frame,
-            label,
-            (x1, max(16, y1 - 8)),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.5,
-            colour,
-            1,
-        )
+        cv2.rectangle(frame, (x1, y1), (x2, y2), colour, 2, cv2.LINE_AA)
+        _draw_detection_label(frame, f"face {face_index}", x1, y1, colour)
 
 
 def _blur_face_regions(frame: Any, detections: list[Detection]) -> None:
@@ -425,13 +681,13 @@ def _draw_overlay(
     """Compose a dashboard-style viewer frame around the live camera image."""
 
     height, width = frame.shape[:2]
-    sidebar_width = 340
+    sidebar_width = 380
     padding = 24
     header_height = 84
     footer_height = 74 if show_help else 42
     content_top = header_height + padding
-    minimum_canvas_width = 1040
-    minimum_canvas_height = 620
+    minimum_canvas_width = 1220
+    minimum_canvas_height = 740
     canvas_width = max(minimum_canvas_width, width + sidebar_width + padding * 3)
     canvas_height = max(minimum_canvas_height, height + header_height + footer_height + padding * 2)
     canvas = np.full((canvas_height, canvas_width, 3), (18, 20, 24), dtype=frame.dtype)
@@ -470,7 +726,8 @@ def _draw_overlay(
     resized_width = max(1, int(width * video_scale))
     resized_height = max(1, int(height * video_scale))
     if resized_width != width or resized_height != height:
-        video = cv2.resize(frame, (resized_width, resized_height), interpolation=cv2.INTER_AREA)
+        interpolation = cv2.INTER_CUBIC if resized_width > width else cv2.INTER_AREA
+        video = cv2.resize(frame, (resized_width, resized_height), interpolation=interpolation)
     else:
         video = frame
 
@@ -535,24 +792,56 @@ def _draw_overlay(
     )
     _draw_text(canvas, f"{len(face_detections)} generic faces · blur {'ON' if privacy_blur else 'OFF'}", panel_x + 18, y + 26, (214, 219, 229), 0.48)
 
-    y += 72
-    cv2.line(canvas, (panel_x + 18, y - 18), (panel_x + sidebar_width - 18, y - 18), (58, 64, 78), 1)
-    _draw_text(canvas, "PRIVACY", panel_x + 18, y, (154, 163, 178), 0.45)
-    _draw_text(canvas, "Identity recognition: disabled", panel_x + 18, y + 28, (180, 255, 180), 0.48)
-    _draw_text(canvas, "Face embeddings: not stored", panel_x + 18, y + 52, (180, 255, 180), 0.48)
+    commentary_y = panel_y + 208
+    cv2.line(
+        canvas,
+        (panel_x + 18, commentary_y - 18),
+        (panel_x + sidebar_width - 18, commentary_y - 18),
+        (58, 64, 78),
+        1,
+    )
+    _draw_text(canvas, "DEMO COMMENTARY", panel_x + 18, commentary_y, (154, 163, 178), 0.45)
+    commentary = _build_demo_commentary(
+        config=config,
+        face_detection_enabled=face_detection_enabled,
+        face_detections=face_detections,
+        object_detection_enabled=object_detection_enabled,
+        object_detections=object_detections,
+        privacy_blur=privacy_blur,
+        object_status=object_status,
+    )
+    _draw_fixed_text_rows(
+        canvas,
+        commentary,
+        panel_x + 18,
+        commentary_y + 30,
+        sidebar_width - 36,
+        row_count=5,
+    )
 
-    y += 98
-    cv2.line(canvas, (panel_x + 18, y - 18), (panel_x + sidebar_width - 18, y - 18), (58, 64, 78), 1)
-    _draw_text(canvas, "STATUS", panel_x + 18, y, (154, 163, 178), 0.45)
-    _draw_text(canvas, f"Object: {object_status_short}", panel_x + 18, y + 28, (120, 220, 255), 0.43)
-    _draw_text(canvas, f"Face: {face_status_short}", panel_x + 18, y + 52, (255, 220, 160), 0.43)
+    privacy_y = panel_y + 382
+    cv2.line(
+        canvas,
+        (panel_x + 18, privacy_y - 18),
+        (panel_x + sidebar_width - 18, privacy_y - 18),
+        (58, 64, 78),
+        1,
+    )
+    _draw_text(canvas, "PRIVACY", panel_x + 18, privacy_y, (154, 163, 178), 0.45)
+    _draw_text(canvas, "Identity recognition: disabled", panel_x + 18, privacy_y + 28, (180, 255, 180), 0.48)
+    _draw_text(canvas, "Face embeddings: not stored", panel_x + 18, privacy_y + 52, (180, 255, 180), 0.48)
 
-    y += 98
-    cv2.line(canvas, (panel_x + 18, y - 18), (panel_x + sidebar_width - 18, y - 18), (58, 64, 78), 1)
-    _draw_text(canvas, "ACTIONS", panel_x + 18, y, (154, 163, 178), 0.45)
-    _draw_text(canvas, "j  emit scene JSONL", panel_x + 18, y + 28, (230, 234, 242), 0.48)
-    _draw_text(canvas, "s  save displayed frame", panel_x + 18, y + 52, (230, 234, 242), 0.48)
-    _draw_text(canvas, "h  compact help", panel_x + 18, y + 76, (230, 234, 242), 0.48)
+    status_y = panel_y + 476
+    cv2.line(
+        canvas,
+        (panel_x + 18, status_y - 18),
+        (panel_x + sidebar_width - 18, status_y - 18),
+        (58, 64, 78),
+        1,
+    )
+    _draw_text(canvas, "STATUS", panel_x + 18, status_y, (154, 163, 178), 0.45)
+    _draw_text(canvas, f"Object: {object_status_short}", panel_x + 18, status_y + 28, (120, 220, 255), 0.43)
+    _draw_text(canvas, f"Face: {face_status_short}", panel_x + 18, status_y + 52, (255, 220, 160), 0.43)
 
     # Footer controls.
     footer_y = canvas_height - footer_height
@@ -612,6 +901,7 @@ def run_viewer(config: AppConfig) -> int:
     detector = ObjectDetector(
         model_path=config.object_model_path,
         backend=config.object_detector_backend,
+        prompts=config.object_prompts,
         confidence_threshold=config.object_confidence_threshold,
         device=config.object_device,
     )
@@ -628,6 +918,7 @@ def run_viewer(config: AppConfig) -> int:
     face_detections: list[Detection] = []
     object_detection_enabled = config.enable_object_detection
     object_detections: list[Detection] = []
+    last_object_detection_frame: int | None = None
     privacy_blur = False
     show_help = True
     frame_delay = 1.0 / max(1, config.target_fps)
@@ -661,9 +952,24 @@ def run_viewer(config: AppConfig) -> int:
                     or not object_detections
                 )
                 if should_infer:
-                    object_detections = detector.detect(frame)
+                    latest_object_detections = detector.detect(frame)
+                    if latest_object_detections:
+                        object_detections = latest_object_detections
+                        last_object_detection_frame = frame_id
+                    elif (
+                        object_detections
+                        and last_object_detection_frame is not None
+                        and frame_id - last_object_detection_frame
+                        <= config.object_detection_hold_frames
+                    ):
+                        # Keep the previous boxes briefly so one weak inference
+                        # frame does not make the demo UI flash empty.
+                        pass
+                    else:
+                        object_detections = []
             elif not object_detection_enabled:
                 object_detections = []
+                last_object_detection_frame = None
 
             if privacy_blur:
                 _blur_face_regions(frame, face_detections)
@@ -718,7 +1024,7 @@ def run_viewer(config: AppConfig) -> int:
                 privacy_blur = not privacy_blur
                 print(f"Privacy blur: {'ON' if privacy_blur else 'OFF'}")
                 if privacy_blur and not face_detector.available:
-                    print("Privacy blur needs face detection, but no usable detector is available.")
+                    print("Privacy blur needs a usable local face detector, but the face-box display toggle can stay off.")
             elif key == ord("h"):
                 show_help = not show_help
 

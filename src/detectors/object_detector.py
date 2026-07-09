@@ -1,4 +1,4 @@
-"""Object detector interface and optional Ultralytics YOLO backend."""
+"""Object detector interface and optional Ultralytics YOLO backends."""
 
 from __future__ import annotations
 
@@ -22,10 +22,11 @@ class Detection:
 class ObjectDetector:
     """Swappable object detector with a safe no-model fallback.
 
-    The current real backend is Ultralytics YOLO. It is loaded only when:
+    The current real backends are Ultralytics YOLO and YOLOE. They are loaded
+    only when:
 
     - object detection is enabled by the caller,
-    - the backend is ``ultralytics`` or ``auto``,
+    - the backend is ``ultralytics``, ``yoloe``, or ``auto``,
     - the model file exists locally, and
     - the optional ``ultralytics`` package imports cleanly.
 
@@ -37,11 +38,13 @@ class ObjectDetector:
         self,
         model_path: str | None = None,
         backend: str = "ultralytics",
+        prompts: list[str] | tuple[str, ...] | None = None,
         confidence_threshold: float = 0.35,
         device: str = "cpu",
     ) -> None:
         self.model_path = model_path
         self.backend = backend.strip().lower()
+        self.prompts = [prompt.strip() for prompt in (prompts or []) if prompt.strip()]
         self.confidence_threshold = confidence_threshold
         self.requested_device = device
         self.accelerator_status = get_torch_accelerator_status(device)
@@ -55,10 +58,10 @@ class ObjectDetector:
             self.status_message = "Object detector backend is disabled."
             return
 
-        if self.backend not in {"auto", "ultralytics"}:
+        if self.backend not in {"auto", "ultralytics", "yoloe"}:
             self.status_message = (
                 f"Unsupported object detector backend {self.backend!r}. "
-                "Supported backends: ultralytics, auto, none."
+                "Supported backends: ultralytics, yoloe, auto, none."
             )
             return
 
@@ -76,8 +79,10 @@ class ObjectDetector:
             )
             return
 
+        load_backend = self._resolve_load_backend(path)
+
         try:
-            from ultralytics import YOLO
+            import ultralytics
         except ImportError as exc:
             self.status_message = (
                 "Ultralytics is not installed. Install optional object detection "
@@ -90,20 +95,46 @@ class ObjectDetector:
             self.status_message = f"Ultralytics import failed: {exc}"
             return
 
+        model_class_name = "YOLOE" if load_backend == "yoloe" else "YOLO"
+        model_class = getattr(ultralytics, model_class_name, None)
+        if model_class is None:
+            self.status_message = (
+                f"Ultralytics does not provide {model_class_name}. "
+                "Upgrade optional object detection dependencies with: "
+                "python -m pip install --upgrade ultralytics"
+            )
+            return
+
         try:
-            self._model = YOLO(str(path))
+            self._model = model_class(str(path))
+            if load_backend == "yoloe" and self.prompts:
+                self._model.set_classes(self.prompts)
             names = getattr(self._model, "names", {})
             if isinstance(names, dict):
                 self._names = {int(key): str(value) for key, value in names.items()}
             self.available = True
+            prompt_note = (
+                f", prompts={len(self.prompts)}"
+                if load_backend == "yoloe"
+                else ""
+            )
             self.status_message = (
-                f"Object detector ready: ultralytics model={path}, "
+                f"Object detector ready: {load_backend} model={path}, "
                 f"confidence>={self.confidence_threshold:.2f}, "
                 f"device={self.device} requested={self.requested_device} "
-                f"backend={self.accelerator_status.backend}"
+                f"backend={self.accelerator_status.backend}{prompt_note}"
             )
         except Exception as exc:
             self.status_message = f"Object detector failed to load {path}: {exc}"
+
+    def _resolve_load_backend(self, path: Path) -> str:
+        """Return the concrete Ultralytics model family to load."""
+
+        if self.backend == "yoloe":
+            return "yoloe"
+        if self.backend == "auto" and path.name.lower().startswith("yoloe"):
+            return "yoloe"
+        return "ultralytics"
 
     def detect(self, frame: Any) -> list[Detection]:
         """Return object detections for a frame."""

@@ -6,7 +6,13 @@ import numpy as np
 
 from src.config import AppConfig
 from src.detectors.object_detector import Detection
-from src.main import _draw_overlay, _should_draw_face_boxes, _viewer_window_flags, cv2
+from src.main import (
+    _build_demo_commentary,
+    _draw_overlay,
+    _should_draw_face_boxes,
+    _viewer_window_flags,
+    cv2,
+)
 
 
 class RenderLogicTests(unittest.TestCase):
@@ -15,6 +21,40 @@ class RenderLogicTests(unittest.TestCase):
 
     def test_face_boxes_are_hidden_when_face_detection_is_disabled(self) -> None:
         self.assertFalse(_should_draw_face_boxes(face_detection_enabled=False))
+
+    def test_demo_commentary_mentions_yoloe_prompts(self) -> None:
+        config = AppConfig(
+            object_detector_backend="yoloe",
+            object_model_path="models/yoloe-26s-seg.pt",
+            object_prompts=["phone", "keys", "wallet"],
+        )
+
+        commentary = _build_demo_commentary(
+            config=config,
+            face_detection_enabled=False,
+            face_detections=[],
+            object_detection_enabled=True,
+            object_detections=[],
+            privacy_blur=False,
+            object_status="Object detector ready",
+        )
+
+        self.assertTrue(any("YOLOE" in line for line in commentary))
+        self.assertTrue(any("phone" in line for line in commentary))
+
+    def test_demo_commentary_distinguishes_blur_from_face_box_display(self) -> None:
+        commentary = _build_demo_commentary(
+            config=AppConfig(),
+            face_detection_enabled=False,
+            face_detections=[],
+            object_detection_enabled=False,
+            object_detections=[],
+            privacy_blur=True,
+            object_status="Object detector disabled",
+        )
+
+        self.assertTrue(any("Face box display is off" in line for line in commentary))
+        self.assertFalse(any("Face mode is off unless" in line for line in commentary))
 
     @unittest.skipIf(cv2 is None, "OpenCV is not installed")
     def test_viewer_window_uses_plain_resizable_gui_when_supported(self) -> None:

@@ -73,11 +73,21 @@ To include local non-identifying face detection:
 pwsh -File scripts/run-gpu.ps1 -FaceDetection
 ```
 
+To run a YOLOE 26-series open-vocabulary model:
+
+```powershell
+pwsh -File scripts/run-gpu.ps1 `
+  -ModelPath models/yoloe-26s-seg.pt `
+  -Backend yoloe `
+  -Prompts "person,phone,keys,wallet,remote control,mug,cable"
+```
+
 ## Benchmark YOLO
 
 ```powershell
 pwsh -File scripts/benchmark-yolo.ps1
 pwsh -File scripts/benchmark-yolo.ps1 -ModelPath models/yolo11m.pt -Frames 60
+pwsh -File scripts/benchmark-yolo.ps1 -ModelPath models/yoloe-26s-seg.pt -Backend yoloe -Prompts "phone,keys,wallet"
 ```
 
 ## Device behaviour

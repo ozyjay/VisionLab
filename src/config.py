@@ -40,6 +40,15 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+def _env_csv(name: str, default: tuple[str, ...] = ()) -> list[str]:
+    """Read a comma-separated environment variable as trimmed values."""
+
+    value = os.getenv(name)
+    if value is None:
+        return list(default)
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
 def _env_choice(name: str, default: str, choices: set[str]) -> str:
     """Read and normalise an environment variable constrained to known choices."""
 
@@ -67,8 +76,10 @@ class AppConfig:
     vllm_model: str = "local-model"
     object_model_path: str = "models/yolo11n.pt"
     object_detector_backend: str = "ultralytics"
+    object_prompts: list[str] | None = None
     object_confidence_threshold: float = 0.35
     object_detection_interval: int = 3
+    object_detection_hold_frames: int = 8
     object_device: str = "cpu"
     face_model_path: str = "models/face_detection_yunet_2026may.onnx"
     captures_dir: str = "captures"
@@ -99,10 +110,14 @@ class AppConfig:
             object_detector_backend=os.getenv(
                 "VISION_OBJECT_DETECTOR_BACKEND", "ultralytics"
             ).strip().lower(),
+            object_prompts=_env_csv("VISION_OBJECT_PROMPTS"),
             object_confidence_threshold=min(
                 1.0, max(0.0, _env_float("VISION_OBJECT_CONFIDENCE_THRESHOLD", 0.35))
             ),
             object_detection_interval=max(1, _env_int("VISION_OBJECT_DETECTION_INTERVAL", 3)),
+            object_detection_hold_frames=max(
+                0, _env_int("VISION_OBJECT_DETECTION_HOLD_FRAMES", 8)
+            ),
             object_device=os.getenv("VISION_OBJECT_DEVICE", "cpu").strip() or "cpu",
             face_model_path=os.getenv(
                 "VISION_FACE_MODEL_PATH", "models/face_detection_yunet_2026may.onnx"

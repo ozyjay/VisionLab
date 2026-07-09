@@ -22,6 +22,19 @@ YOLO11_ALIASES = {
     "extra-large": "yolo11x.pt",
 }
 
+YOLOE_ALIASES = {
+    "yoloe": "yoloe-26s-seg.pt",
+    "yoloe-s": "yoloe-26s-seg.pt",
+    "yoloe-small": "yoloe-26s-seg.pt",
+    "yoloe-m": "yoloe-26m-seg.pt",
+    "yoloe-medium": "yoloe-26m-seg.pt",
+    "yoloe-l": "yoloe-26l-seg.pt",
+    "yoloe-large": "yoloe-26l-seg.pt",
+    "yoloe-x": "yoloe-26x-seg.pt",
+    "yoloe-pf": "yoloe-26s-seg-pf.pt",
+    "yoloe-prompt-free": "yoloe-26s-seg-pf.pt",
+}
+
 MODEL_NAME_PATTERN = re.compile(r"^yolo[\w.-]*\.pt$")
 
 
@@ -36,12 +49,17 @@ def resolve_model_name(value: str) -> str:
     if alias:
         return alias
 
+    alias = YOLOE_ALIASES.get(name.lower())
+    if alias:
+        return alias
+
     if "/" in name or "\\" in name:
         raise ValueError("use a model filename such as yolo11m.pt, not a path")
 
     if not MODEL_NAME_PATTERN.fullmatch(name):
         raise ValueError(
-            "expected a YOLO .pt filename such as yolo11s.pt, yolo11m.pt, or yolo11x.pt"
+            "expected a YOLO .pt filename such as yolo11s.pt, yolo11m.pt, "
+            "yolo11x.pt, or yoloe-26s-seg.pt"
         )
 
     return name
@@ -56,7 +74,7 @@ def download_model(model_name: str, models_dir: Path) -> Path:
         return target
 
     try:
-        from ultralytics import YOLO
+        import ultralytics
     except ImportError:
         print(
             "Ultralytics is not installed. Install optional object-detection dependencies first:",
@@ -68,13 +86,23 @@ def download_model(model_name: str, models_dir: Path) -> Path:
         )
         raise SystemExit(1)
 
+    model_class_name = "YOLOE" if model_name.startswith("yoloe") else "YOLO"
+    model_class = getattr(ultralytics, model_class_name, None)
+    if model_class is None:
+        print(
+            f"Ultralytics does not provide {model_class_name}. Upgrade it first:",
+            file=sys.stderr,
+        )
+        print("  .venv/bin/python -m pip install --upgrade ultralytics", file=sys.stderr)
+        raise SystemExit(1)
+
     models_dir.mkdir(parents=True, exist_ok=True)
 
     previous_cwd = Path.cwd()
     try:
         os.chdir(models_dir)
         print(f"Downloading/loading {model_name} with Ultralytics...")
-        YOLO(model_name)
+        model_class(model_name)
     finally:
         os.chdir(previous_cwd)
 
@@ -100,7 +128,7 @@ def build_parser() -> argparse.ArgumentParser:
         default="yolo11s.pt",
         help=(
             "Model filename or YOLO11 size alias. Examples: small, medium, large, "
-            "x, yolo11m.pt. Default: yolo11s.pt"
+            "x, yolo11m.pt, yoloe-s, yoloe-26s-seg.pt. Default: yolo11s.pt"
         ),
     )
     parser.add_argument(

@@ -36,6 +36,22 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.camera_resolution, (640, 480))
         self.assertIn("unsupported", output.getvalue())
 
+    def test_object_prompts_parse_comma_separated_values(self) -> None:
+        env = {"VISION_OBJECT_PROMPTS": " phone, keys ,wallet,, remote control "}
+        with patch.dict(os.environ, env):
+            config = AppConfig.from_env()
+
+        self.assertEqual(
+            config.object_prompts,
+            ["phone", "keys", "wallet", "remote control"],
+        )
+
+    def test_object_detection_hold_frames_can_be_configured(self) -> None:
+        with patch.dict(os.environ, {"VISION_OBJECT_DETECTION_HOLD_FRAMES": "12"}):
+            config = AppConfig.from_env()
+
+        self.assertEqual(config.object_detection_hold_frames, 12)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -7,3 +7,4 @@ __pycache__/
 captures/
 logs/
 models/
+mobileclip*.ts

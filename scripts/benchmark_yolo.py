@@ -34,6 +34,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser = argparse.ArgumentParser(description="Benchmark YOLO detector inference.")
     parser.add_argument("--model", default="models/yolo11s.pt", help="Local YOLO .pt path.")
+    parser.add_argument("--backend", default="auto", help="Detector backend: auto, ultralytics, or yoloe.")
+    parser.add_argument("--prompts", default="", help="Comma-separated YOLOE classes to detect.")
     parser.add_argument("--device", default="auto", help="Torch device, for example auto, cpu, rocm, or cuda:0.")
     parser.add_argument("--frames", type=int, default=30, help="Measured frame count.")
     parser.add_argument("--warmup", type=int, default=5, help="Warm-up frame count.")
@@ -49,6 +51,8 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     detector = ObjectDetector(
         model_path=args.model,
+        backend=args.backend,
+        prompts=[item.strip() for item in args.prompts.split(",") if item.strip()],
         confidence_threshold=args.confidence,
         device=args.device,
     )
