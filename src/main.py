@@ -1033,6 +1033,14 @@ def _dashboard_html() -> str:
           <button onclick="emitJson()">Print JSONL</button>
         </div>
       </section>
+      <section class="section">
+        <div class="label">Model</div>
+        <div class="sub" id="modelStatus">Loading local models...</div>
+        <div class="controls" style="grid-template-columns: 1fr auto;">
+          <select id="modelSelect" style="min-width:0;border-radius:14px;border:1px solid var(--border);background:var(--panel-strong);color:var(--text);padding:10px 12px;"></select>
+          <button onclick="switchModel()">Switch</button>
+        </div>
+      </section>
     </aside>
   </main>
   <script>
@@ -1055,9 +1063,26 @@ def _dashboard_html() -> str:
           : '<span class="sub">No confident objects yet.</span>';
         document.getElementById('commentary').innerHTML =
           state.commentary.map(line => `<div>${line}</div>`).join('');
+        document.getElementById('modelStatus').textContent =
+          `${state.current_model_path} · ${state.current_backend}`;
       } catch (err) {
         document.getElementById('status').textContent = 'waiting for backend...';
       }
+    }
+    async function refreshModels() {
+      const res = await fetch('/models', {cache: 'no-store'});
+      const data = await res.json();
+      const select = document.getElementById('modelSelect');
+      select.innerHTML = data.models.map(model =>
+        `<option value="${model.path}">${model.name} · ${model.backend}</option>`
+      ).join('');
+      select.value = data.current_model_path;
+    }
+    async function switchModel() {
+      const modelPath = document.getElementById('modelSelect').value;
+      await fetch(`/select-model?path=${encodeURIComponent(modelPath)}`, {method: 'POST'});
+      await refreshState();
+      await refreshModels();
     }
     async function toggleMode(name) {
       await fetch(`/toggle?mode=${encodeURIComponent(name)}`, {method: 'POST'});
@@ -1068,6 +1093,7 @@ def _dashboard_html() -> str:
       refreshState();
     }
     refreshState();
+    refreshModels();
     setInterval(refreshState, 500);
   </script>
 </body>
@@ -1081,6 +1107,7 @@ class _WebDashboardRuntime:
     def __init__(self, config: AppConfig) -> None:
         self.config = config
         self.lock = threading.Lock()
+        self.detector_lock = threading.Lock()
         self.stop_event = threading.Event()
         self.frame_jpeg: bytes | None = None
         self.frame_id = 0
@@ -1092,6 +1119,9 @@ class _WebDashboardRuntime:
         self.object_detections: list[Detection] = []
         self.face_status = "Face detector not started."
         self.object_status = "Object detector not started."
+        self.detector: ObjectDetector | None = None
+        self.current_model_path = config.object_model_path
+        self.current_backend = _backend_for_model_path(config.object_model_path, "auto")
 
     def toggle(self, mode: str) -> None:
         with self.lock:
@@ -1105,6 +1135,45 @@ class _WebDashboardRuntime:
                     self.face_detections = []
             elif mode == "privacy":
                 self.privacy_blur = not self.privacy_blur
+
+    def load_object_detector(self, model_path: str | None = None) -> str:
+        """Load or reload the object detector."""
+
+        selected_model_path = model_path or self.current_model_path
+        backend = _backend_for_model_path(selected_model_path, "auto")
+        with self.detector_lock:
+            detector = ObjectDetector(
+                model_path=selected_model_path,
+                backend=backend,
+                prompts=self.config.object_prompts,
+                confidence_threshold=self.config.object_confidence_threshold,
+                device=self.config.object_device,
+            )
+            self.detector = detector
+        with self.lock:
+            self.current_model_path = selected_model_path
+            self.current_backend = backend
+            self.object_status = detector.status_message
+            self.object_detections = []
+        return detector.status_message
+
+    def switch_model(self, model_path: str) -> dict[str, Any]:
+        """Switch to a local model file and return status details."""
+
+        path = Path(model_path)
+        if not path.exists() or path.suffix != ".pt":
+            return {
+                "ok": False,
+                "status": f"Model file not found: {model_path}",
+                "model_path": self.current_model_path,
+            }
+        status = self.load_object_detector(str(path))
+        return {
+            "ok": self.detector.available if self.detector is not None else False,
+            "status": status,
+            "model_path": str(path),
+            "backend": self.current_backend,
+        }
 
     def state(self) -> dict[str, Any]:
         with self.lock:
@@ -1128,6 +1197,8 @@ class _WebDashboardRuntime:
                 "commentary": commentary[:5],
                 "object_status": self.object_status,
                 "face_status": self.face_status,
+                "current_model_path": self.current_model_path,
+                "current_backend": self.current_backend,
             }
 
     def emit_jsonl(self) -> None:
@@ -1154,15 +1225,8 @@ class _WebDashboardRuntime:
 
         print(status.message)
         face_detector = FaceDetector(model_path=self.config.face_model_path)
-        detector = ObjectDetector(
-            model_path=self.config.object_model_path,
-            backend=self.config.object_detector_backend,
-            prompts=self.config.object_prompts,
-            confidence_threshold=self.config.object_confidence_threshold,
-            device=self.config.object_device,
-        )
         self.face_status = face_detector.status_message
-        self.object_status = detector.status_message
+        self.load_object_detector(self.config.object_model_path)
         print(self.face_status)
         print(self.object_status)
 
@@ -1195,14 +1259,18 @@ class _WebDashboardRuntime:
                 if (face_enabled or privacy_blur) and face_detector.available:
                     face_detections = face_detector.detect(frame)
 
-                if object_enabled and detector.available:
+                with self.detector_lock:
+                    detector = self.detector
+
+                if object_enabled and detector is not None and detector.available:
                     should_infer = (
                         frame_id == 1
                         or frame_id % self.config.object_detection_interval == 0
                         or not self.object_detections
                     )
                     if should_infer:
-                        latest = detector.detect(frame)
+                        with self.detector_lock:
+                            latest = detector.detect(frame)
                         if latest:
                             with self.lock:
                                 self.object_detections = latest
@@ -1255,6 +1323,33 @@ def _detection_to_public_dict(detection: Detection) -> dict[str, Any]:
     }
 
 
+def _backend_for_model_path(model_path: str, configured_backend: str = "auto") -> str:
+    """Choose a detector backend for a model path."""
+
+    backend = configured_backend.strip().lower()
+    if backend in {"ultralytics", "yoloe"}:
+        return backend
+    return "yoloe" if Path(model_path).name.lower().startswith("yoloe") else "ultralytics"
+
+
+def _list_local_model_options(models_dir: str = "models") -> list[dict[str, str]]:
+    """List local YOLO model files for browser model switching."""
+
+    root = Path(models_dir)
+    if not root.exists():
+        return []
+    options: list[dict[str, str]] = []
+    for path in sorted(root.glob("yolo*.pt")):
+        options.append(
+            {
+                "name": path.name,
+                "path": str(path),
+                "backend": _backend_for_model_path(str(path), "auto"),
+            }
+        )
+    return options
+
+
 def _make_dashboard_handler(runtime: _WebDashboardRuntime) -> type[BaseHTTPRequestHandler]:
     """Create a request handler bound to a dashboard runtime."""
 
@@ -1275,6 +1370,22 @@ def _make_dashboard_handler(runtime: _WebDashboardRuntime) -> type[BaseHTTPReque
 
             if parsed.path == "/state":
                 payload = json.dumps(runtime.state()).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+                return
+
+            if parsed.path == "/models":
+                payload = json.dumps(
+                    {
+                        "models": _list_local_model_options(),
+                        "current_model_path": runtime.current_model_path,
+                        "current_backend": runtime.current_backend,
+                    }
+                ).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Cache-Control", "no-store")
@@ -1320,6 +1431,17 @@ def _make_dashboard_handler(runtime: _WebDashboardRuntime) -> type[BaseHTTPReque
                 runtime.emit_jsonl()
                 self.send_response(204)
                 self.end_headers()
+                return
+
+            if parsed.path == "/select-model":
+                model_path = parse_qs(parsed.query).get("path", [""])[0]
+                payload = json.dumps(runtime.switch_model(model_path)).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
                 return
 
             self.send_error(404)

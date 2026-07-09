@@ -35,6 +35,24 @@ YOLOE_ALIASES = {
     "yoloe-prompt-free": "yoloe-26s-seg-pf.pt",
 }
 
+MODEL_BUNDLES = {
+    "demo": [
+        "yolo11s.pt",
+        "yolo11m.pt",
+        "yoloe-26s-seg.pt",
+        "yoloe-26m-seg.pt",
+    ],
+    "all-useful": [
+        "yolo11n.pt",
+        "yolo11s.pt",
+        "yolo11m.pt",
+        "yolo11l.pt",
+        "yoloe-26s-seg.pt",
+        "yoloe-26m-seg.pt",
+        "yoloe-26l-seg.pt",
+    ],
+}
+
 MODEL_NAME_PATTERN = re.compile(r"^yolo[\w.-]*\.pt$")
 
 
@@ -63,6 +81,15 @@ def resolve_model_name(value: str) -> str:
         )
 
     return name
+
+
+def resolve_model_values(value: str) -> list[str]:
+    """Resolve a model name, alias, or bundle into concrete filenames."""
+
+    name = value.strip().lower()
+    if name in MODEL_BUNDLES:
+        return list(MODEL_BUNDLES[name])
+    return [resolve_model_name(value)]
 
 
 def download_model(model_name: str, models_dir: Path) -> Path:
@@ -128,7 +155,8 @@ def build_parser() -> argparse.ArgumentParser:
         default="yolo11s.pt",
         help=(
             "Model filename or YOLO11 size alias. Examples: small, medium, large, "
-            "x, yolo11m.pt, yoloe-s, yoloe-26s-seg.pt. Default: yolo11s.pt"
+            "x, yolo11m.pt, yoloe-s, yoloe-26s-seg.pt, demo, all-useful. "
+            "Default: yolo11s.pt"
         ),
     )
     parser.add_argument(
@@ -144,8 +172,9 @@ def main(argv: list[str] | None = None) -> int:
 
     args = build_parser().parse_args(argv)
     try:
-        model_name = resolve_model_name(args.model)
-        download_model(model_name, Path(args.models_dir))
+        model_names = resolve_model_values(args.model)
+        for model_name in model_names:
+            download_model(model_name, Path(args.models_dir))
     except ValueError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 2

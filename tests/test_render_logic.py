@@ -7,6 +7,7 @@ import numpy as np
 from src.config import AppConfig
 from src.detectors.object_detector import Detection
 from src.main import (
+    _backend_for_model_path,
     _build_demo_commentary,
     _dashboard_html,
     _draw_overlay,
@@ -63,6 +64,17 @@ class RenderLogicTests(unittest.TestCase):
         self.assertIn("VisionLab dashboard", html)
         self.assertIn("/stream", html)
         self.assertIn("Browser-rendered demo UI", html)
+        self.assertIn("modelSelect", html)
+
+    def test_backend_for_model_path_auto_detects_yoloe(self) -> None:
+        self.assertEqual(
+            _backend_for_model_path("models/yoloe-26s-seg.pt", "auto"),
+            "yoloe",
+        )
+        self.assertEqual(
+            _backend_for_model_path("models/yolo11m.pt", "auto"),
+            "ultralytics",
+        )
 
     @unittest.skipIf(cv2 is None, "OpenCV is not installed")
     def test_viewer_window_uses_plain_resizable_gui_when_supported(self) -> None:

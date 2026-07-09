@@ -1,5 +1,8 @@
 param(
-    [switch]$ObjectDetection
+    [switch]$ObjectDetection,
+    [switch]$DownloadModels,
+    [ValidateSet("demo", "all-useful")]
+    [string]$ModelBundle = $(if ($env:VISION_MODEL_BUNDLE) { $env:VISION_MODEL_BUNDLE } else { "demo" })
 )
 
 $ErrorActionPreference = "Stop"
@@ -8,6 +11,7 @@ $ProjectRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $VenvDir = if ($env:VISION_VENV_DIR) { $env:VISION_VENV_DIR } else { Join-Path $ProjectRoot ".venv" }
 $PythonBin = if ($env:PYTHON_BIN) { $env:PYTHON_BIN } else { "python" }
 $InstallObjectDetection = $ObjectDetection -or ($env:VISION_INSTALL_OBJECT_DETECTION -match "^(1|true|yes|on)$")
+$ShouldDownloadModels = $DownloadModels -or ($env:VISION_DOWNLOAD_MODELS -match "^(1|true|yes|on)$")
 
 Set-Location $ProjectRoot
 
@@ -45,10 +49,20 @@ Write-Host "Installing dependencies..."
 if ($InstallObjectDetection) {
     Write-Host "Installing optional object-detection dependencies..."
     & $VenvPython -m pip install -r requirements-object-detection.txt
+
+    if ($ShouldDownloadModels) {
+        Write-Host "Downloading object-detection model bundle: $ModelBundle"
+        & $VenvPython scripts/download_yolo_model.py $ModelBundle
+    }
 } else {
     Write-Host "Skipping optional object-detection dependencies."
     Write-Host "Install them later with:"
     Write-Host "  ./.venv/bin/python -m pip install -r requirements-object-detection.txt"
+}
+
+if ($ShouldDownloadModels) {
+    Write-Host "Downloading face detector model..."
+    pwsh -File scripts/download-face-detector.ps1
 }
 
 Write-Host ""

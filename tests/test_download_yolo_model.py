@@ -40,6 +40,23 @@ class DownloadYoloModelTests(unittest.TestCase):
             "yoloe-26s-seg-pf.pt",
         )
 
+    def test_demo_bundle_resolves_to_practical_model_set(self) -> None:
+        self.assertEqual(
+            download_yolo_model.resolve_model_values("demo"),
+            [
+                "yolo11s.pt",
+                "yolo11m.pt",
+                "yoloe-26s-seg.pt",
+                "yoloe-26m-seg.pt",
+            ],
+        )
+
+    def test_all_useful_bundle_includes_yoloe_large(self) -> None:
+        self.assertIn(
+            "yoloe-26l-seg.pt",
+            download_yolo_model.resolve_model_values("all-useful"),
+        )
+
     def test_paths_are_rejected(self) -> None:
         with self.assertRaises(ValueError):
             download_yolo_model.resolve_model_name("models/yolo11m.pt")

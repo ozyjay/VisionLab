@@ -38,141 +38,66 @@ logs/       # optional JSONL scene-state logs
 
 ## Install
 
-Use a project-local virtual environment:
-
-```bash
-bash scripts/setup.sh
-. .venv/bin/activate
-```
-
-To also try the optional Ultralytics YOLO object-detection backend:
-
-```bash
-bash scripts/setup.sh --object-detection
-. .venv/bin/activate
-```
-
-PowerShell:
+Use the consolidated PowerShell helper for normal setup:
 
 ```powershell
-pwsh -File scripts/setup.ps1
-./.venv/bin/Activate.ps1
+pwsh -File scripts/vision.ps1 setup -ObjectDetection -DownloadModels -ModelBundle demo
 ```
 
-PowerShell with optional object detection:
+This creates the project-local `.venv`, installs base and object-detection
+dependencies, downloads the face detector, and downloads the practical demo model
+bundle:
+
+- `yolo11s.pt`
+- `yolo11m.pt`
+- `yoloe-26s-seg.pt`
+- `yoloe-26m-seg.pt`
+
+Use the larger bundle if you want more local model choices:
 
 ```powershell
-pwsh -File scripts/setup.ps1 -ObjectDetection
-./.venv/bin/Activate.ps1
+pwsh -File scripts/vision.ps1 setup -ObjectDetection -DownloadModels -ModelBundle all-useful
 ```
 
-The setup scripts refuse to install dependencies outside the project-local
-virtual environment.
+The setup script refuses to install dependencies outside the project-local virtual
+environment.
 
 ## Run
 
-Health check:
-
-```bash
-python -m src.main health
-```
-
-Open the legacy OpenCV webcam viewer:
-
-```bash
-python -m src.main run
-```
-
-Open the browser-rendered demo dashboard:
-
-```bash
-python -m src.main web
-```
-
-PowerShell convenience command:
+Start the preferred browser-rendered dashboard:
 
 ```powershell
-pwsh -File scripts/run-web.ps1
+pwsh -File scripts/vision.ps1 web
 ```
 
 Then open <http://127.0.0.1:8019>. The browser dashboard is the preferred demo
-UX; OpenCV remains the local capture and vision backend.
+UX; OpenCV remains the local capture and vision backend. The dashboard includes
+a model selector for switching between downloaded `models/yolo*.pt` files.
 
-Run with object detection enabled:
-
-```bash
-VISION_ENABLE_OBJECT_DETECTION=true \
-VISION_OBJECT_MODEL_PATH=models/yolo11n.pt \
-python -m src.main run
-```
-
-The app will not download models automatically at viewer startup. Put a local
-YOLO model file at `models/yolo11n.pt`, or point `VISION_OBJECT_MODEL_PATH` to
-another local model.
-If the file or optional dependency is missing, the webcam app still starts and
-prints a clear warning.
-
-### Try stronger YOLO models
-
-The bundled default is `yolo11n.pt` because it is small and CPU-friendly. To try
-stronger Ultralytics YOLO11 detection models, download one explicitly with
-PowerShell, then run the viewer against that local file:
+Useful consolidated commands:
 
 ```powershell
-pwsh -File scripts/download-yolo-model.ps1 small
-pwsh -File scripts/run-yolo.ps1 -ModelPath models/yolo11s.pt
+pwsh -File scripts/vision.ps1 health
+pwsh -File scripts/vision.ps1 config
+pwsh -File scripts/vision.ps1 download-models -ModelBundle demo
+pwsh -File scripts/vision.ps1 face-model
+pwsh -File scripts/vision.ps1 benchmark -ModelPath models/yoloe-26s-seg.pt
+pwsh -File scripts/vision.ps1 run     # legacy OpenCV window
 ```
 
-Useful size aliases:
-
-| Alias | Model | Notes |
-| --- | --- | --- |
-| `small` | `yolo11s.pt` | First upgrade to try; usually still practical on CPU |
-| `medium` | `yolo11m.pt` | Better accuracy, noticeably heavier |
-| `large` | `yolo11l.pt` | Stronger again; expect lower FPS |
-| `x` | `yolo11x.pt` | Heaviest YOLO11 option; best for GPU testing |
-
-The downloader also accepts explicit filenames such as `yolo11m.pt`. Ultralytics
-documents YOLO11 detection filenames as `yolo11n.pt`, `yolo11s.pt`,
-`yolo11m.pt`, `yolo11l.pt`, and `yolo11x.pt`:
-<https://docs.ultralytics.com/models/yolo11/>.
-
-### Try YOLOE open-vocabulary detection
-
-For broader "random object" coverage, use a YOLOE 26-series model with explicit
-text prompts. YOLOE is still local, but it can be prompted for classes outside
-the fixed COCO label set:
+YOLOE open-vocabulary prompts can be changed at launch:
 
 ```powershell
-pwsh -File scripts/download-yolo-model.ps1 yoloe-s
-pwsh -File scripts/run-yolo.ps1 `
-  -ModelPath models/yoloe-26s-seg.pt `
-  -Backend yoloe `
-  -Prompts "person,phone,keys,wallet,remote control,mug,cable,mouse,keyboard,book,screwdriver"
+pwsh -File scripts/vision.ps1 web `
+  -ModelPath models/yoloe-26m-seg.pt `
+  -Prompts "person,mobile phone,computer mouse,pen,watch,keys,wallet,mug,keyboard,cable"
 ```
 
-If you already downloaded another YOLOE 26 model, point `-ModelPath` at it, for
-example `models/yoloe-26m-seg.pt` or `models/yoloe-26l-seg.pt`. Use
-`VISION_OBJECT_PROMPTS` to tune what the detector should look for in your room.
-YOLOE text prompts also need Ultralytics' CLIP dependency and may download a
+YOLOE text prompts need Ultralytics' CLIP dependency and may download a
 `mobileclip2_b.ts` text-encoder asset on first use.
 
-If no command is supplied, the app defaults to `run`.
-
-Convenience scripts are also available:
-
-```bash
-bash scripts/health.sh
-bash scripts/run.sh
-```
-
-PowerShell:
-
-```powershell
-pwsh -File scripts/health.ps1
-pwsh -File scripts/run.ps1
-pwsh -File scripts/run-web.ps1
-```
+The older specialised scripts are still kept as compatibility shortcuts, but
+`vision.ps1` is the recommended entrypoint.
 
 ## Configuration
 
