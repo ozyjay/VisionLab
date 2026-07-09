@@ -11,6 +11,7 @@ from src.main import (
     _build_demo_commentary,
     _dashboard_html,
     _draw_overlay,
+    _normalise_prompt_text,
     _should_draw_face_boxes,
     _viewer_window_flags,
     cv2,
@@ -65,6 +66,20 @@ class RenderLogicTests(unittest.TestCase):
         self.assertIn("/stream", html)
         self.assertIn("Browser-rendered demo UI", html)
         self.assertIn("modelSelect", html)
+        self.assertIn("promptEditor", html)
+        self.assertIn("/prompts", html)
+
+    def test_dashboard_model_selector_is_above_live_detection_sections(self) -> None:
+        html = _dashboard_html()
+
+        self.assertLess(html.index('id="modelSelect"'), html.index('id="objects"'))
+        self.assertIn("height: 72px", html)
+
+    def test_prompt_text_is_normalised_from_comma_separated_values(self) -> None:
+        self.assertEqual(
+            _normalise_prompt_text(" person, pen ,, mobile phone,watch "),
+            ["person", "pen", "mobile phone", "watch"],
+        )
 
     def test_backend_for_model_path_auto_detects_yoloe(self) -> None:
         self.assertEqual(

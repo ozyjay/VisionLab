@@ -75,7 +75,8 @@ pwsh -File scripts/vision.ps1 web
 
 Then open <http://127.0.0.1:8019>. The browser dashboard is the preferred demo
 UX; OpenCV remains the local capture and vision backend. The dashboard includes
-a model selector for switching between downloaded `models/yolo*.pt` files.
+a model selector for switching between downloaded `models/yolo*.pt` files and a
+YOLOE prompt editor for changing the object labels during the demo.
 
 Useful consolidated commands:
 
@@ -95,6 +96,8 @@ pwsh -File scripts/vision.ps1 web `
   -ModelPath models/yoloe-26m-seg.pt `
   -Prompts "person,mobile phone,computer mouse,pen,watch,keys,wallet,mug,keyboard,cable"
 ```
+
+They can also be edited live from the browser dashboard sidebar.
 
 YOLOE text prompts need Ultralytics' CLIP dependency and the
 `models/mobileclip2_b.ts` text-encoder asset. The model downloader keeps this

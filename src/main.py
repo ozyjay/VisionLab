@@ -530,6 +530,12 @@ def _build_demo_commentary(
     return commentary
 
 
+def _normalise_prompt_text(value: str) -> list[str]:
+    """Parse comma-separated object prompts into clean labels."""
+
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
 def _object_counts(detections: list[Detection]) -> Counter[str]:
     return Counter(detection.label for detection in detections if detection.source == "object")
 
@@ -945,7 +951,12 @@ def _dashboard_html() -> str:
       border-radius: 16px;
       background: #020617;
     }
-    aside { padding: 18px; }
+    aside {
+      padding: 18px;
+      display: grid;
+      grid-template-rows: auto auto auto auto auto auto;
+      align-content: start;
+    }
     .section { padding: 14px 0; border-top: 1px solid var(--border); }
     .section:first-child { border-top: 0; padding-top: 0; }
     .label { color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; }
@@ -964,13 +975,24 @@ def _dashboard_html() -> str:
     }
     .pill.on { color: #052e16; background: var(--ok); border-color: transparent; font-weight: 800; }
     .commentary {
-      min-height: 132px;
+      height: 132px;
       display: grid;
       gap: 8px;
       margin-top: 10px;
+      overflow: auto;
+      padding-right: 4px;
     }
     .commentary div { color: #dbeafe; font-size: 13px; line-height: 1.35; }
-    .objects { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; min-height: 72px; align-content: flex-start; }
+    .objects {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 10px;
+      height: 72px;
+      overflow: auto;
+      align-content: flex-start;
+      padding-right: 4px;
+    }
     .object-chip { padding: 7px 10px; border-radius: 999px; background: rgba(56, 189, 248, 0.13); border: 1px solid rgba(56, 189, 248, 0.24); font-size: 12px; }
     button {
       color: var(--text);
@@ -982,6 +1004,28 @@ def _dashboard_html() -> str:
     }
     button:hover { border-color: rgba(56, 189, 248, 0.72); }
     .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin-top: 12px; }
+    select {
+      min-width: 0;
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      background: var(--panel-strong);
+      color: var(--text);
+      padding: 10px 12px;
+    }
+    textarea {
+      width: 100%;
+      min-height: 84px;
+      resize: vertical;
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      background: var(--panel-strong);
+      color: var(--text);
+      padding: 10px 12px;
+      font: inherit;
+      font-size: 13px;
+      line-height: 1.35;
+      margin-top: 10px;
+    }
     @media (max-width: 980px) {
       .shell { grid-template-columns: 1fr; padding: 10px 14px 18px; }
       header { padding: 18px 14px 8px; }
@@ -1001,6 +1045,23 @@ def _dashboard_html() -> str:
       <img class="stream" src="/stream" alt="Live camera stream">
     </section>
     <aside class="card">
+      <section class="section stable-section">
+        <div class="label">Model</div>
+        <div class="sub" id="modelStatus">Loading local models...</div>
+        <div class="controls" style="grid-template-columns: 1fr auto;">
+          <select id="modelSelect"></select>
+          <button onclick="switchModel()">Switch</button>
+        </div>
+      </section>
+      <section class="section stable-section">
+        <div class="label">YOLOE object prompts</div>
+        <div class="sub">Comma-separated labels to look for, for example: person, pen, mobile phone.</div>
+        <textarea id="promptEditor" spellcheck="false"></textarea>
+        <div class="controls" style="grid-template-columns: 1fr auto;">
+          <button onclick="resetPromptEditor()">Reset from detector</button>
+          <button onclick="applyPrompts()">Apply prompts</button>
+        </div>
+      </section>
       <section class="section">
         <div class="row">
           <div>
@@ -1033,17 +1094,18 @@ def _dashboard_html() -> str:
           <button onclick="emitJson()">Print JSONL</button>
         </div>
       </section>
-      <section class="section">
-        <div class="label">Model</div>
-        <div class="sub" id="modelStatus">Loading local models...</div>
-        <div class="controls" style="grid-template-columns: 1fr auto;">
-          <select id="modelSelect" style="min-width:0;border-radius:14px;border:1px solid var(--border);background:var(--panel-strong);color:var(--text);padding:10px 12px;"></select>
-          <button onclick="switchModel()">Switch</button>
-        </div>
-      </section>
     </aside>
   </main>
   <script>
+    let promptEditorDirty = false;
+    function escapeHtml(value) {
+      return String(value)
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#039;');
+    }
     async function refreshState() {
       try {
         const res = await fetch('/state', {cache: 'no-store'});
@@ -1059,12 +1121,15 @@ def _dashboard_html() -> str:
         privacyMode.className = `pill ${state.privacy_blur_enabled ? 'on' : ''}`;
         const objects = document.getElementById('objects');
         objects.innerHTML = state.objects.length
-          ? state.objects.map(o => `<span class="object-chip">${o.label} ${(o.confidence * 100).toFixed(0)}%</span>`).join('')
+          ? state.objects.map(o => `<span class="object-chip">${escapeHtml(o.label)} ${(o.confidence * 100).toFixed(0)}%</span>`).join('')
           : '<span class="sub">No confident objects yet.</span>';
         document.getElementById('commentary').innerHTML =
-          state.commentary.map(line => `<div>${line}</div>`).join('');
+          state.commentary.map(line => `<div>${escapeHtml(line)}</div>`).join('');
         document.getElementById('modelStatus').textContent =
           `${state.current_model_path} · ${state.current_backend}`;
+        if (!promptEditorDirty) {
+          document.getElementById('promptEditor').value = state.object_prompts.join(', ');
+        }
       } catch (err) {
         document.getElementById('status').textContent = 'waiting for backend...';
       }
@@ -1084,6 +1149,17 @@ def _dashboard_html() -> str:
       await refreshState();
       await refreshModels();
     }
+    async function applyPrompts() {
+      const prompts = document.getElementById('promptEditor').value;
+      const body = new URLSearchParams({prompts});
+      await fetch('/prompts', {method: 'POST', body});
+      promptEditorDirty = false;
+      await refreshState();
+    }
+    async function resetPromptEditor() {
+      promptEditorDirty = false;
+      await refreshState();
+    }
     async function toggleMode(name) {
       await fetch(`/toggle?mode=${encodeURIComponent(name)}`, {method: 'POST'});
       refreshState();
@@ -1094,6 +1170,11 @@ def _dashboard_html() -> str:
     }
     refreshState();
     refreshModels();
+    document.addEventListener('input', event => {
+      if (event.target && event.target.id === 'promptEditor') {
+        promptEditorDirty = true;
+      }
+    });
     setInterval(refreshState, 500);
   </script>
 </body>
@@ -1122,6 +1203,7 @@ class _WebDashboardRuntime:
         self.detector: ObjectDetector | None = None
         self.current_model_path = config.object_model_path
         self.current_backend = _backend_for_model_path(config.object_model_path, "auto")
+        self.current_prompts = list(config.object_prompts or [])
 
     def toggle(self, mode: str) -> None:
         with self.lock:
@@ -1145,7 +1227,7 @@ class _WebDashboardRuntime:
             detector = ObjectDetector(
                 model_path=selected_model_path,
                 backend=backend,
-                prompts=self.config.object_prompts,
+                prompts=self.current_prompts,
                 confidence_threshold=self.config.object_confidence_threshold,
                 device=self.config.object_device,
             )
@@ -1155,7 +1237,24 @@ class _WebDashboardRuntime:
             self.current_backend = backend
             self.object_status = detector.status_message
             self.object_detections = []
+            self.config.object_prompts = list(self.current_prompts)
         return detector.status_message
+
+    def apply_prompts(self, prompt_text: str) -> dict[str, Any]:
+        """Apply edited object prompts and reload the current detector."""
+
+        prompts = _normalise_prompt_text(prompt_text)
+        with self.lock:
+            self.current_prompts = prompts
+            self.config.object_prompts = list(prompts)
+        status = self.load_object_detector(self.current_model_path)
+        return {
+            "ok": self.detector.available if self.detector is not None else False,
+            "status": status,
+            "prompts": prompts,
+            "model_path": self.current_model_path,
+            "backend": self.current_backend,
+        }
 
     def switch_model(self, model_path: str) -> dict[str, Any]:
         """Switch to a local model file and return status details."""
@@ -1199,6 +1298,7 @@ class _WebDashboardRuntime:
                 "face_status": self.face_status,
                 "current_model_path": self.current_model_path,
                 "current_backend": self.current_backend,
+                "object_prompts": list(self.current_prompts),
             }
 
     def emit_jsonl(self) -> None:
@@ -1357,6 +1457,18 @@ def _make_dashboard_handler(runtime: _WebDashboardRuntime) -> type[BaseHTTPReque
         def log_message(self, format: str, *args: Any) -> None:
             return
 
+        def _post_params(self) -> dict[str, list[str]]:
+            """Read POST query/body parameters."""
+
+            parsed = urlparse(self.path)
+            params = parse_qs(parsed.query)
+            content_length = int(self.headers.get("Content-Length", "0") or "0")
+            if content_length > 0:
+                body = self.rfile.read(content_length).decode("utf-8")
+                for key, values in parse_qs(body).items():
+                    params.setdefault(key, []).extend(values)
+            return params
+
         def do_GET(self) -> None:
             parsed = urlparse(self.path)
             if parsed.path == "/":
@@ -1421,7 +1533,7 @@ def _make_dashboard_handler(runtime: _WebDashboardRuntime) -> type[BaseHTTPReque
         def do_POST(self) -> None:
             parsed = urlparse(self.path)
             if parsed.path == "/toggle":
-                mode = parse_qs(parsed.query).get("mode", [""])[0]
+                mode = self._post_params().get("mode", [""])[0]
                 runtime.toggle(mode)
                 self.send_response(204)
                 self.end_headers()
@@ -1434,8 +1546,19 @@ def _make_dashboard_handler(runtime: _WebDashboardRuntime) -> type[BaseHTTPReque
                 return
 
             if parsed.path == "/select-model":
-                model_path = parse_qs(parsed.query).get("path", [""])[0]
+                model_path = self._post_params().get("path", [""])[0]
                 payload = json.dumps(runtime.switch_model(model_path)).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+                return
+
+            if parsed.path == "/prompts":
+                prompt_text = self._post_params().get("prompts", [""])[0]
+                payload = json.dumps(runtime.apply_prompts(prompt_text)).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Cache-Control", "no-store")
