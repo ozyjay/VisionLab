@@ -41,12 +41,12 @@ logs/       # optional JSONL scene-state logs
 Use the consolidated PowerShell helper for normal setup:
 
 ```powershell
-pwsh -File scripts/vision.ps1 setup -ObjectDetection -DownloadModels -ModelBundle demo
+pwsh -File scripts/vision.ps1 setup -DownloadModels -ModelBundle demo
 ```
 
-This creates the project-local `.venv`, installs base and object-detection
-dependencies, downloads the face detector, and downloads the practical demo model
-bundle:
+This creates the project-local ROCm virtual environment `.venv-rocm312`, installs
+base and object-detection dependencies, installs the AMD ROCm PyTorch wheel set,
+downloads the face detector, and downloads the practical demo model bundle:
 
 - `yolo11s.pt`
 - `yolo11m.pt`
@@ -56,11 +56,13 @@ bundle:
 Use the larger bundle if you want more local model choices:
 
 ```powershell
-pwsh -File scripts/vision.ps1 setup -ObjectDetection -DownloadModels -ModelBundle all-useful
+pwsh -File scripts/vision.ps1 setup -DownloadModels -ModelBundle all-useful
 ```
 
 The setup script refuses to install dependencies outside the project-local virtual
 environment.
+If you previously created the CPU `.venv`, it is no longer needed for the
+recommended workflow once `.venv-rocm312` is working.
 
 ## Run
 

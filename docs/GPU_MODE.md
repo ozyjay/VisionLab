@@ -13,10 +13,10 @@ On this machine, `rocminfo` reports:
 - Compute units: `40`
 - Fast FP16: enabled
 
-The default `.venv` currently uses a non-ROCm Torch build, so GPU mode uses a
-separate Python 3.12 environment named `.venv-rocm312`.
+The recommended VisionLab environment on this machine is the Python 3.12 ROCm
+environment named `.venv-rocm312`.
 
-## Why a separate environment?
+## Why Python 3.12 and `.venv-rocm312`?
 
 AMD's current Ryzen Linux compatibility matrix lists:
 
@@ -25,13 +25,13 @@ AMD's current Ryzen Linux compatibility matrix lists:
 - Python `3.12`
 - Ryzen AI Max+ 395 / `gfx1151`
 
-The project default `.venv` can stay CPU-stable while `.venv-rocm312` carries the
-larger ROCm wheel set.
+The ROCm wheel set is large and Python-version-specific, so the project uses a
+clearly named local environment rather than mixing CPU and ROCm Torch installs.
 
 ## Setup
 
 ```powershell
-pwsh -File scripts/setup-rocm.ps1
+pwsh -File scripts/vision.ps1 setup
 ```
 
 This installs:
@@ -42,52 +42,39 @@ This installs:
 
 The script refuses to install outside the selected virtual environment.
 
-## Run GPU viewer
+## Run browser dashboard with GPU auto-detection
 
 ```powershell
-pwsh -File scripts/run-gpu.ps1
+pwsh -File scripts/vision.ps1 web
 ```
 
 Defaults:
 
-- model: `models/yolo11s.pt`
+- model: `models/yoloe-26s-seg.pt`
 - device: `auto`
-- camera resolution mode: `fast` (`640x480`)
+- camera resolution mode: `quality` (`1280x720`)
 - object detection: enabled
 
 To run a bigger model:
 
 ```powershell
-pwsh -File scripts/run-gpu.ps1 -ModelPath models/yolo11m.pt
-```
-
-To trade speed for more detection detail:
-
-```powershell
-pwsh -File scripts/run-gpu.ps1 -ResolutionMode quality
-```
-
-To include local non-identifying face detection:
-
-```powershell
-pwsh -File scripts/run-gpu.ps1 -FaceDetection
+pwsh -File scripts/vision.ps1 web -ModelPath models/yoloe-26m-seg.pt
 ```
 
 To run a YOLOE 26-series open-vocabulary model:
 
 ```powershell
-pwsh -File scripts/run-gpu.ps1 `
+pwsh -File scripts/vision.ps1 web `
   -ModelPath models/yoloe-26s-seg.pt `
-  -Backend yoloe `
   -Prompts "person,phone,keys,wallet,remote control,mug,cable"
 ```
 
 ## Benchmark YOLO
 
 ```powershell
-pwsh -File scripts/benchmark-yolo.ps1
-pwsh -File scripts/benchmark-yolo.ps1 -ModelPath models/yolo11m.pt -Frames 60
-pwsh -File scripts/benchmark-yolo.ps1 -ModelPath models/yoloe-26s-seg.pt -Backend yoloe -Prompts "phone,keys,wallet"
+pwsh -File scripts/vision.ps1 benchmark
+pwsh -File scripts/vision.ps1 benchmark -ModelPath models/yolo11m.pt -Frames 60
+pwsh -File scripts/vision.ps1 benchmark -ModelPath models/yoloe-26s-seg.pt -Prompts "phone,keys,wallet"
 ```
 
 ## Device behaviour

@@ -11,7 +11,7 @@ param(
     [string]$ModelPath = $(if ($env:VISION_OBJECT_MODEL_PATH) { $env:VISION_OBJECT_MODEL_PATH } else { "models/yoloe-26s-seg.pt" }),
     [string]$Backend = $(if ($env:VISION_OBJECT_DETECTOR_BACKEND) { $env:VISION_OBJECT_DETECTOR_BACKEND } else { "auto" }),
     [string]$Prompts = $(if ($env:VISION_OBJECT_PROMPTS) { $env:VISION_OBJECT_PROMPTS } else { "person,mobile phone,computer mouse,pen,watch,keys,wallet,mug,keyboard,cable" }),
-    [string]$Device = $(if ($env:VISION_OBJECT_DEVICE) { $env:VISION_OBJECT_DEVICE } else { "cpu" }),
+    [string]$Device = $(if ($env:VISION_OBJECT_DEVICE) { $env:VISION_OBJECT_DEVICE } else { "auto" }),
     [string]$HostName = $(if ($env:VISION_WEB_HOST) { $env:VISION_WEB_HOST } else { "127.0.0.1" }),
     [int]$Port = $(if ($env:VISION_WEB_PORT) { [int]$env:VISION_WEB_PORT } else { 8019 }),
     [ValidateSet("fast", "quality")]
@@ -19,7 +19,7 @@ param(
 
     [int]$Frames = 30,
     [int]$Warmup = 5,
-    [string]$VenvDir = $(if ($env:VISION_VENV_DIR) { $env:VISION_VENV_DIR } else { ".venv" })
+    [string]$VenvDir = $(if ($env:VISION_VENV_DIR) { $env:VISION_VENV_DIR } else { ".venv-rocm312" })
 )
 
 $ErrorActionPreference = "Stop"
@@ -34,7 +34,7 @@ function Get-VenvPython {
         $VenvPython = Join-Path $VenvPath "Scripts/python.exe"
     }
     if (-not (Test-Path $VenvPython)) {
-        throw "Project virtual environment not found. Run: pwsh -File scripts/vision.ps1 setup -ObjectDetection"
+        throw "ROCm virtual environment not found. Run: pwsh -File scripts/vision.ps1 setup"
     }
     return $VenvPython
 }
@@ -50,15 +50,12 @@ function Set-DemoObjectEnvironment {
 
 switch ($Command) {
     "setup" {
-        $SetupArgs = @()
-        if ($ObjectDetection) {
-            $SetupArgs += "-ObjectDetection"
-        }
+        & pwsh -File (Join-Path $PSScriptRoot "setup-rocm.ps1") -VenvDir $VenvDir
         if ($DownloadModels) {
-            $SetupArgs += "-DownloadModels"
+            $VenvPython = Get-VenvPython
+            & $VenvPython scripts/download_yolo_model.py $ModelBundle
+            & pwsh -File (Join-Path $PSScriptRoot "download-face-detector.ps1")
         }
-        $SetupArgs += @("-ModelBundle", $ModelBundle)
-        & pwsh -File (Join-Path $PSScriptRoot "setup.ps1") @SetupArgs
         break
     }
 
