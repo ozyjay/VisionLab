@@ -77,11 +77,26 @@ Health check:
 python -m src.main health
 ```
 
-Open the webcam viewer:
+Open the legacy OpenCV webcam viewer:
 
 ```bash
 python -m src.main run
 ```
+
+Open the browser-rendered demo dashboard:
+
+```bash
+python -m src.main web
+```
+
+PowerShell convenience command:
+
+```powershell
+pwsh -File scripts/run-web.ps1
+```
+
+Then open <http://127.0.0.1:8019>. The browser dashboard is the preferred demo
+UX; OpenCV remains the local capture and vision backend.
 
 Run with object detection enabled:
 
@@ -156,6 +171,7 @@ PowerShell:
 ```powershell
 pwsh -File scripts/health.ps1
 pwsh -File scripts/run.ps1
+pwsh -File scripts/run-web.ps1
 ```
 
 ## Configuration
@@ -184,6 +200,8 @@ Configuration is loaded from environment variables:
 | `VISION_LOGS_DIR` | `logs` | Reserved log directory |
 | `VISION_SCENE_STATE_INTERVAL_SECONDS` | `0` | Print JSONL scene-state snapshots every N seconds; `0` disables interval output |
 | `VISION_SCENE_STATE_LOG_PATH` | empty | Optional JSONL file path to append emitted scene-state snapshots |
+| `VISION_WEB_HOST` | `127.0.0.1` | Browser dashboard host |
+| `VISION_WEB_PORT` | `8019` | Browser dashboard port |
 
 Example:
 

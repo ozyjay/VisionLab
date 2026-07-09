@@ -52,6 +52,12 @@ class ConfigTests(unittest.TestCase):
 
         self.assertEqual(config.object_detection_hold_frames, 12)
 
+    def test_web_dashboard_port_can_be_configured(self) -> None:
+        with patch.dict(os.environ, {"VISION_WEB_PORT": "8020"}):
+            config = AppConfig.from_env()
+
+        self.assertEqual(config.web_port, 8020)
+
 
 if __name__ == "__main__":
     unittest.main()

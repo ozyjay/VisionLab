@@ -8,6 +8,7 @@ from src.config import AppConfig
 from src.detectors.object_detector import Detection
 from src.main import (
     _build_demo_commentary,
+    _dashboard_html,
     _draw_overlay,
     _should_draw_face_boxes,
     _viewer_window_flags,
@@ -55,6 +56,13 @@ class RenderLogicTests(unittest.TestCase):
 
         self.assertTrue(any("Face box display is off" in line for line in commentary))
         self.assertFalse(any("Face mode is off unless" in line for line in commentary))
+
+    def test_dashboard_html_uses_browser_rendered_ui(self) -> None:
+        html = _dashboard_html()
+
+        self.assertIn("VisionLab dashboard", html)
+        self.assertIn("/stream", html)
+        self.assertIn("Browser-rendered demo UI", html)
 
     @unittest.skipIf(cv2 is None, "OpenCV is not installed")
     def test_viewer_window_uses_plain_resizable_gui_when_supported(self) -> None:

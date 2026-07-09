@@ -6,13 +6,17 @@ import argparse
 from collections import Counter
 from dataclasses import asdict
 from datetime import datetime
+import json
 import importlib.util
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import platform
 import sys
+import threading
 import time
 from typing import Any
 from urllib.error import URLError
+from urllib.parse import parse_qs, urlparse
 from urllib.request import Request, urlopen
 
 import numpy as np
@@ -173,6 +177,8 @@ def run_health_check(config: AppConfig) -> int:
     print(f"face_model_path: {config.face_model_path}")
     print(f"scene_state_interval_seconds: {config.scene_state_interval_seconds}")
     print(f"scene_state_log_path: {config.scene_state_log_path}")
+    print(f"web_host: {config.web_host}")
+    print(f"web_port: {config.web_port}")
     return 0
 
 
@@ -875,6 +881,477 @@ def _draw_overlay(
     return canvas
 
 
+def _dashboard_html() -> str:
+    """Return the local browser dashboard HTML."""
+
+    return """<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>VisionLab dashboard</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #090b10;
+      --panel: rgba(22, 26, 36, 0.84);
+      --panel-strong: rgba(32, 38, 52, 0.92);
+      --border: rgba(148, 163, 184, 0.18);
+      --text: #f8fafc;
+      --muted: #94a3b8;
+      --accent: #38bdf8;
+      --ok: #86efac;
+      --warn: #fbbf24;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at top left, rgba(56, 189, 248, 0.2), transparent 36rem),
+        radial-gradient(circle at bottom right, rgba(134, 239, 172, 0.12), transparent 34rem),
+        var(--bg);
+      color: var(--text);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 22px 28px 12px;
+    }
+    h1 { margin: 0; font-size: 24px; letter-spacing: -0.03em; }
+    .sub { color: var(--muted); margin-top: 5px; font-size: 13px; }
+    .shell {
+      display: grid;
+      grid-template-columns: minmax(520px, 1fr) 380px;
+      gap: 18px;
+      padding: 12px 28px 28px;
+    }
+    .card {
+      border: 1px solid var(--border);
+      background: var(--panel);
+      border-radius: 22px;
+      box-shadow: 0 24px 80px rgba(0, 0, 0, 0.34);
+      backdrop-filter: blur(18px);
+      overflow: hidden;
+    }
+    .video-card { padding: 14px; }
+    .stream {
+      display: block;
+      width: 100%;
+      max-height: calc(100vh - 170px);
+      object-fit: contain;
+      border-radius: 16px;
+      background: #020617;
+    }
+    aside { padding: 18px; }
+    .section { padding: 14px 0; border-top: 1px solid var(--border); }
+    .section:first-child { border-top: 0; padding-top: 0; }
+    .label { color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; }
+    .metric { font-size: 32px; font-weight: 800; letter-spacing: -0.06em; }
+    .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 7px 10px;
+      color: var(--muted);
+      background: rgba(15, 23, 42, 0.56);
+      font-size: 12px;
+    }
+    .pill.on { color: #052e16; background: var(--ok); border-color: transparent; font-weight: 800; }
+    .commentary {
+      min-height: 132px;
+      display: grid;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .commentary div { color: #dbeafe; font-size: 13px; line-height: 1.35; }
+    .objects { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; min-height: 72px; align-content: flex-start; }
+    .object-chip { padding: 7px 10px; border-radius: 999px; background: rgba(56, 189, 248, 0.13); border: 1px solid rgba(56, 189, 248, 0.24); font-size: 12px; }
+    button {
+      color: var(--text);
+      background: var(--panel-strong);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 10px 12px;
+      cursor: pointer;
+    }
+    button:hover { border-color: rgba(56, 189, 248, 0.72); }
+    .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin-top: 12px; }
+    @media (max-width: 980px) {
+      .shell { grid-template-columns: 1fr; padding: 10px 14px 18px; }
+      header { padding: 18px 14px 8px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>VisionLab dashboard</h1>
+      <div class="sub">Browser-rendered demo UI · OpenCV stays behind the scenes for capture and vision</div>
+    </div>
+    <div class="pill" id="status">connecting...</div>
+  </header>
+  <main class="shell">
+    <section class="card video-card">
+      <img class="stream" src="/stream" alt="Live camera stream">
+    </section>
+    <aside class="card">
+      <section class="section">
+        <div class="row">
+          <div>
+            <div class="label">Objects</div>
+            <div class="metric" id="objectCount">0</div>
+          </div>
+          <span class="pill" id="objectsMode">objects off</span>
+        </div>
+        <div class="objects" id="objects"></div>
+      </section>
+      <section class="section">
+        <div class="row">
+          <div>
+            <div class="label">Faces</div>
+            <div class="metric" id="faceCount">0</div>
+          </div>
+          <span class="pill" id="privacyMode">privacy off</span>
+        </div>
+      </section>
+      <section class="section">
+        <div class="label">Demo commentary</div>
+        <div class="commentary" id="commentary"></div>
+      </section>
+      <section class="section">
+        <div class="label">Controls</div>
+        <div class="controls">
+          <button onclick="toggleMode('objects')">Toggle objects</button>
+          <button onclick="toggleMode('faces')">Toggle face boxes</button>
+          <button onclick="toggleMode('privacy')">Toggle blur</button>
+          <button onclick="emitJson()">Print JSONL</button>
+        </div>
+      </section>
+    </aside>
+  </main>
+  <script>
+    async function refreshState() {
+      try {
+        const res = await fetch('/state', {cache: 'no-store'});
+        const state = await res.json();
+        document.getElementById('status').textContent = `${state.fps.toFixed(1)} FPS · frame ${state.frame_id}`;
+        document.getElementById('objectCount').textContent = state.objects.length;
+        document.getElementById('faceCount').textContent = state.faces.length;
+        const objectsMode = document.getElementById('objectsMode');
+        objectsMode.textContent = state.object_detection_enabled ? 'objects on' : 'objects off';
+        objectsMode.className = `pill ${state.object_detection_enabled ? 'on' : ''}`;
+        const privacyMode = document.getElementById('privacyMode');
+        privacyMode.textContent = state.privacy_blur_enabled ? 'privacy blur on' : 'privacy blur off';
+        privacyMode.className = `pill ${state.privacy_blur_enabled ? 'on' : ''}`;
+        const objects = document.getElementById('objects');
+        objects.innerHTML = state.objects.length
+          ? state.objects.map(o => `<span class="object-chip">${o.label} ${(o.confidence * 100).toFixed(0)}%</span>`).join('')
+          : '<span class="sub">No confident objects yet.</span>';
+        document.getElementById('commentary').innerHTML =
+          state.commentary.map(line => `<div>${line}</div>`).join('');
+      } catch (err) {
+        document.getElementById('status').textContent = 'waiting for backend...';
+      }
+    }
+    async function toggleMode(name) {
+      await fetch(`/toggle?mode=${encodeURIComponent(name)}`, {method: 'POST'});
+      refreshState();
+    }
+    async function emitJson() {
+      await fetch('/emit-json', {method: 'POST'});
+      refreshState();
+    }
+    refreshState();
+    setInterval(refreshState, 500);
+  </script>
+</body>
+</html>
+"""
+
+
+class _WebDashboardRuntime:
+    """Background camera and detector loop for the browser dashboard."""
+
+    def __init__(self, config: AppConfig) -> None:
+        self.config = config
+        self.lock = threading.Lock()
+        self.stop_event = threading.Event()
+        self.frame_jpeg: bytes | None = None
+        self.frame_id = 0
+        self.fps = 0.0
+        self.face_detection_enabled = config.enable_face_detection
+        self.object_detection_enabled = config.enable_object_detection
+        self.privacy_blur = False
+        self.face_detections: list[Detection] = []
+        self.object_detections: list[Detection] = []
+        self.face_status = "Face detector not started."
+        self.object_status = "Object detector not started."
+
+    def toggle(self, mode: str) -> None:
+        with self.lock:
+            if mode == "objects":
+                self.object_detection_enabled = not self.object_detection_enabled
+                if not self.object_detection_enabled:
+                    self.object_detections = []
+            elif mode == "faces":
+                self.face_detection_enabled = not self.face_detection_enabled
+                if not self.face_detection_enabled and not self.privacy_blur:
+                    self.face_detections = []
+            elif mode == "privacy":
+                self.privacy_blur = not self.privacy_blur
+
+    def state(self) -> dict[str, Any]:
+        with self.lock:
+            commentary = _build_demo_commentary(
+                config=self.config,
+                face_detection_enabled=self.face_detection_enabled,
+                face_detections=list(self.face_detections),
+                object_detection_enabled=self.object_detection_enabled,
+                object_detections=list(self.object_detections),
+                privacy_blur=self.privacy_blur,
+                object_status=self.object_status,
+            )
+            return {
+                "frame_id": self.frame_id,
+                "fps": self.fps,
+                "object_detection_enabled": self.object_detection_enabled,
+                "face_detection_enabled": self.face_detection_enabled,
+                "privacy_blur_enabled": self.privacy_blur,
+                "objects": [_detection_to_public_dict(item) for item in self.object_detections],
+                "faces": [_detection_to_public_dict(item) for item in self.face_detections],
+                "commentary": commentary[:5],
+                "object_status": self.object_status,
+                "face_status": self.face_status,
+            }
+
+    def emit_jsonl(self) -> None:
+        state = build_scene_state(
+            frame_id=self.frame_id,
+            fps=self.fps,
+            object_detections=list(self.object_detections),
+            face_detections=list(self.face_detections),
+            face_detection_enabled=self.face_detection_enabled,
+            privacy_blur_enabled=self.privacy_blur,
+        )
+        _emit_scene_state(state, self.config.scene_state_log_path)
+
+    def run(self) -> None:
+        camera = Camera(
+            index=self.config.camera_index,
+            target_fps=self.config.target_fps,
+            resolution=self.config.camera_resolution,
+        )
+        status = camera.open()
+        if not status.available:
+            print(status.message)
+            return
+
+        print(status.message)
+        face_detector = FaceDetector(model_path=self.config.face_model_path)
+        detector = ObjectDetector(
+            model_path=self.config.object_model_path,
+            backend=self.config.object_detector_backend,
+            prompts=self.config.object_prompts,
+            confidence_threshold=self.config.object_confidence_threshold,
+            device=self.config.object_device,
+        )
+        self.face_status = face_detector.status_message
+        self.object_status = detector.status_message
+        print(self.face_status)
+        print(self.object_status)
+
+        last_time = time.perf_counter()
+        last_object_detection_frame: int | None = None
+        frame_delay = 1.0 / max(1, self.config.target_fps)
+        try:
+            while not self.stop_event.is_set():
+                loop_start = time.perf_counter()
+                ok, frame = camera.read()
+                if not ok or frame is None:
+                    time.sleep(0.1)
+                    continue
+
+                with self.lock:
+                    self.frame_id += 1
+                    frame_id = self.frame_id
+                    face_enabled = self.face_detection_enabled
+                    object_enabled = self.object_detection_enabled
+                    privacy_blur = self.privacy_blur
+
+                now = time.perf_counter()
+                elapsed = now - last_time
+                if elapsed > 0:
+                    current_fps = 1.0 / elapsed
+                    self.fps = current_fps if self.fps == 0.0 else (self.fps * 0.9 + current_fps * 0.1)
+                last_time = now
+
+                face_detections: list[Detection] = []
+                if (face_enabled or privacy_blur) and face_detector.available:
+                    face_detections = face_detector.detect(frame)
+
+                if object_enabled and detector.available:
+                    should_infer = (
+                        frame_id == 1
+                        or frame_id % self.config.object_detection_interval == 0
+                        or not self.object_detections
+                    )
+                    if should_infer:
+                        latest = detector.detect(frame)
+                        if latest:
+                            with self.lock:
+                                self.object_detections = latest
+                            last_object_detection_frame = frame_id
+                        elif (
+                            self.object_detections
+                            and last_object_detection_frame is not None
+                            and frame_id - last_object_detection_frame
+                            <= self.config.object_detection_hold_frames
+                        ):
+                            pass
+                        else:
+                            with self.lock:
+                                self.object_detections = []
+                elif not object_enabled:
+                    with self.lock:
+                        self.object_detections = []
+                    last_object_detection_frame = None
+
+                if privacy_blur:
+                    _blur_face_regions(frame, face_detections)
+                if face_enabled:
+                    _draw_face_detections(frame, face_detections)
+
+                with self.lock:
+                    object_detections = list(self.object_detections)
+                    self.face_detections = face_detections
+
+                _draw_object_detections(frame, object_detections)
+                ok, encoded = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 86])
+                if ok:
+                    with self.lock:
+                        self.frame_jpeg = encoded.tobytes()
+
+                spent = time.perf_counter() - loop_start
+                if spent < frame_delay:
+                    time.sleep(frame_delay - spent)
+        finally:
+            camera.release()
+
+
+def _detection_to_public_dict(detection: Detection) -> dict[str, Any]:
+    """Return a browser-safe detection dictionary."""
+
+    return {
+        "label": detection.label,
+        "confidence": round(detection.confidence, 4),
+        "bbox": list(detection.bbox),
+        "source": detection.source,
+    }
+
+
+def _make_dashboard_handler(runtime: _WebDashboardRuntime) -> type[BaseHTTPRequestHandler]:
+    """Create a request handler bound to a dashboard runtime."""
+
+    class DashboardHandler(BaseHTTPRequestHandler):
+        def log_message(self, format: str, *args: Any) -> None:
+            return
+
+        def do_GET(self) -> None:
+            parsed = urlparse(self.path)
+            if parsed.path == "/":
+                payload = _dashboard_html().encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+                return
+
+            if parsed.path == "/state":
+                payload = json.dumps(runtime.state()).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+                return
+
+            if parsed.path == "/stream":
+                self.send_response(200)
+                self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                while not runtime.stop_event.is_set():
+                    with runtime.lock:
+                        frame = runtime.frame_jpeg
+                    if frame is None:
+                        time.sleep(0.05)
+                        continue
+                    try:
+                        self.wfile.write(b"--frame\r\n")
+                        self.wfile.write(b"Content-Type: image/jpeg\r\n")
+                        self.wfile.write(f"Content-Length: {len(frame)}\r\n\r\n".encode("ascii"))
+                        self.wfile.write(frame)
+                        self.wfile.write(b"\r\n")
+                        time.sleep(0.05)
+                    except (BrokenPipeError, ConnectionResetError):
+                        break
+                return
+
+            self.send_error(404)
+
+        def do_POST(self) -> None:
+            parsed = urlparse(self.path)
+            if parsed.path == "/toggle":
+                mode = parse_qs(parsed.query).get("mode", [""])[0]
+                runtime.toggle(mode)
+                self.send_response(204)
+                self.end_headers()
+                return
+
+            if parsed.path == "/emit-json":
+                runtime.emit_jsonl()
+                self.send_response(204)
+                self.end_headers()
+                return
+
+            self.send_error(404)
+
+    return DashboardHandler
+
+
+def run_web_dashboard(config: AppConfig) -> int:
+    """Run the browser-rendered local dashboard."""
+
+    if cv2 is None:
+        print("OpenCV is not installed. Install dependencies with:")
+        print("  python -m pip install -r requirements.txt")
+        return 1
+
+    runtime = _WebDashboardRuntime(config)
+    worker = threading.Thread(target=runtime.run, name="vision-dashboard", daemon=True)
+    worker.start()
+    server = ThreadingHTTPServer((config.web_host, config.web_port), _make_dashboard_handler(runtime))
+    print(f"VisionLab browser dashboard: http://{config.web_host}:{config.web_port}")
+    print("Press Ctrl+C to stop.")
+    try:
+        server.serve_forever(poll_interval=0.2)
+    except KeyboardInterrupt:
+        print("Stopping dashboard...")
+    finally:
+        runtime.stop_event.set()
+        server.server_close()
+        worker.join(timeout=2.0)
+    return 0
+
+
 def run_viewer(config: AppConfig) -> int:
     """Run the OpenCV webcam viewer."""
 
@@ -1064,6 +1541,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("health", help="Print environment and camera health information")
     subparsers.add_parser("run", help="Open the webcam viewer")
+    subparsers.add_parser("web", help="Open the browser-rendered local dashboard")
     subparsers.add_parser("config", help="Print the resolved configuration")
     return parser
 
@@ -1088,6 +1566,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_health_check(config)
     if command == "run":
         return run_viewer(config)
+    if command == "web":
+        return run_web_dashboard(config)
     if command == "config":
         return print_config(config)
 

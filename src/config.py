@@ -86,6 +86,8 @@ class AppConfig:
     logs_dir: str = "logs"
     scene_state_interval_seconds: float = 0.0
     scene_state_log_path: str = ""
+    web_host: str = "127.0.0.1"
+    web_port: int = 8019
 
     @classmethod
     def from_env(cls) -> "AppConfig":
@@ -128,6 +130,9 @@ class AppConfig:
                 0.0, _env_float("VISION_SCENE_STATE_INTERVAL_SECONDS", 0.0)
             ),
             scene_state_log_path=os.getenv("VISION_SCENE_STATE_LOG_PATH", "").strip(),
+            web_host=os.getenv("VISION_WEB_HOST", "127.0.0.1").strip()
+            or "127.0.0.1",
+            web_port=max(1, _env_int("VISION_WEB_PORT", 8019)),
         )
 
     @property
