@@ -143,6 +143,46 @@ def download_model(model_name: str, models_dir: Path) -> Path:
     return target
 
 
+def download_yoloe_text_encoder(models_dir: Path) -> Path:
+    """Download YOLOE's MobileCLIP text encoder into the models directory."""
+
+    target = models_dir / "mobileclip2_b.ts"
+    if target.exists():
+        print(f"Text encoder already exists: {target}")
+        return target
+
+    try:
+        from ultralytics.utils.downloads import attempt_download_asset
+    except ImportError:
+        print(
+            "Ultralytics is not installed. Install optional object-detection dependencies first:",
+            file=sys.stderr,
+        )
+        print(
+            "  .venv-rocm312/bin/python -m pip install -r requirements-object-detection.txt",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
+    models_dir.mkdir(parents=True, exist_ok=True)
+    previous_cwd = Path.cwd()
+    try:
+        os.chdir(models_dir)
+        print("Downloading/loading mobileclip2_b.ts with Ultralytics...")
+        resolved = Path(attempt_download_asset("mobileclip2_b.ts"))
+    finally:
+        os.chdir(previous_cwd)
+
+    if not target.exists():
+        raise RuntimeError(
+            f"Ultralytics completed but {target} was not found. "
+            f"Resolved path was {resolved}."
+        )
+
+    print(f"Text encoder ready: {target}")
+    return target
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the command-line parser."""
 
@@ -173,8 +213,14 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         model_names = resolve_model_values(args.model)
+        needs_yoloe_text_encoder = False
         for model_name in model_names:
             download_model(model_name, Path(args.models_dir))
+            needs_yoloe_text_encoder = (
+                needs_yoloe_text_encoder or model_name.startswith("yoloe")
+            )
+        if needs_yoloe_text_encoder:
+            download_yoloe_text_encoder(Path(args.models_dir))
     except ValueError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 2

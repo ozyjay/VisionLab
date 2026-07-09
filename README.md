@@ -52,6 +52,7 @@ downloads the face detector, and downloads the practical demo model bundle:
 - `yolo11m.pt`
 - `yoloe-26s-seg.pt`
 - `yoloe-26m-seg.pt`
+- `mobileclip2_b.ts` for YOLOE text prompts
 
 Use the larger bundle if you want more local model choices:
 
@@ -95,8 +96,9 @@ pwsh -File scripts/vision.ps1 web `
   -Prompts "person,mobile phone,computer mouse,pen,watch,keys,wallet,mug,keyboard,cable"
 ```
 
-YOLOE text prompts need Ultralytics' CLIP dependency and may download a
-`mobileclip2_b.ts` text-encoder asset on first use.
+YOLOE text prompts need Ultralytics' CLIP dependency and the
+`models/mobileclip2_b.ts` text-encoder asset. The model downloader keeps this
+asset in `models/` with the other local weights.
 
 The older specialised scripts are still kept as compatibility shortcuts, but
 `vision.ps1` is the recommended entrypoint.

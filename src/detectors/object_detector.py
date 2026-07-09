@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
 from typing import Any
 
@@ -78,6 +79,7 @@ class ObjectDetector:
                 "Detection will stay off until a local YOLO model is available."
             )
             return
+        path = path.resolve()
 
         load_backend = self._resolve_load_backend(path)
 
@@ -108,7 +110,12 @@ class ObjectDetector:
         try:
             self._model = model_class(str(path))
             if load_backend == "yoloe" and self.prompts:
-                self._model.set_classes(self.prompts)
+                previous_cwd = Path.cwd()
+                try:
+                    os.chdir(path.parent)
+                    self._model.set_classes(self.prompts)
+                finally:
+                    os.chdir(previous_cwd)
             names = getattr(self._model, "names", {})
             if isinstance(names, dict):
                 self._names = {int(key): str(value) for key, value in names.items()}
