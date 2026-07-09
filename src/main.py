@@ -496,7 +496,7 @@ def _build_demo_commentary(
         else:
             commentary.append("Object detection is enabled, but the selected backend is not ready.")
     else:
-        commentary.append("Object detection is paused; press o to enable it.")
+        commentary.append("Object detection is paused; the O shortcut toggles it.")
 
     if config.object_detector_backend == "yoloe" or config.object_model_path.lower().endswith("-seg.pt"):
         prompts = ", ".join((config.object_prompts or [])[:5])
@@ -513,7 +513,7 @@ def _build_demo_commentary(
     elif privacy_blur:
         commentary.append("Face box display is off; blur still uses local face boxes internally.")
     else:
-        commentary.append("Face box display is off; press f to show generic face boxes.")
+        commentary.append("Face boxes are hidden; the F shortcut toggles generic face boxes.")
 
     if privacy_blur:
         commentary.append("Privacy blur is active; face regions are blurred locally before display.")
@@ -525,7 +525,7 @@ def _build_demo_commentary(
             f"Scene JSONL is emitted every {config.scene_state_interval_seconds:g}s."
         )
     else:
-        commentary.append("Press j to emit a compact scene-state JSONL snapshot.")
+        commentary.append("Scene JSONL is manual; the J shortcut emits a compact snapshot.")
 
     return commentary
 
@@ -862,12 +862,12 @@ def _draw_overlay(
     footer_text = (
         "q quit   ·   f face detection   ·   o object detection   ·   p privacy blur"
         if show_help
-        else "Press h for controls"
+        else "H shows controls"
     )
     _draw_text(canvas, footer_text, padding, footer_y + 28, (214, 219, 229), 0.5)
     _draw_text(
         canvas,
-        f"Scene JSON: {'interval ' + str(config.scene_state_interval_seconds) + 's' if config.scene_state_interval_seconds > 0 else 'press j'}",
+        f"Scene JSON: {'interval ' + str(config.scene_state_interval_seconds) + 's' if config.scene_state_interval_seconds > 0 else 'manual (J snapshot)'}",
         padding,
         footer_y + 52 if show_help else footer_y + 28,
         (120, 220, 255),
