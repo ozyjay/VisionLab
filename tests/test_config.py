@@ -23,7 +23,7 @@ class ConfigTests(unittest.TestCase):
             config = AppConfig.from_env()
 
         self.assertEqual(config.camera_resolution_mode, "quality")
-        self.assertEqual(config.camera_resolution, (1280, 720))
+        self.assertEqual(config.camera_resolution, (1920, 1080))
         self.assertIn("camera:quality", config.active_modes)
 
     def test_invalid_camera_resolution_mode_falls_back_to_fast(self) -> None:

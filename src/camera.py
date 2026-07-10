@@ -75,6 +75,20 @@ class Camera:
         if self.capture is not None and cv2 is not None:
             self.capture.set(cv2.CAP_PROP_FPS, float(self.target_fps))
 
+    def set_resolution(self, resolution: tuple[int, int]) -> tuple[int, int]:
+        """Request a new capture resolution and return the reported dimensions."""
+
+        self.resolution = resolution
+        if self.capture is None or cv2 is None:
+            return resolution
+
+        width, height = resolution
+        self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, float(width))
+        self.capture.set(cv2.CAP_PROP_FRAME_HEIGHT, float(height))
+        actual_width = int(self.capture.get(cv2.CAP_PROP_FRAME_WIDTH) or width)
+        actual_height = int(self.capture.get(cv2.CAP_PROP_FRAME_HEIGHT) or height)
+        return actual_width, actual_height
+
     def release(self) -> None:
         """Release the camera if it is open."""
 

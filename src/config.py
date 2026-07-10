@@ -7,7 +7,7 @@ import os
 
 CAMERA_RESOLUTION_PRESETS: dict[str, tuple[int, int]] = {
     "fast": (640, 480),
-    "quality": (1280, 720),
+    "quality": (1920, 1080),
 }
 
 

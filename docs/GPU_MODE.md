@@ -52,7 +52,7 @@ Defaults:
 
 - model: `models/yoloe-26s-seg.pt`
 - device: `auto`
-- camera resolution mode: `quality` (`1280x720`)
+- camera resolution mode: `quality` (`1920x1080`, or 1080p)
 - object detection: enabled
 
 To run a bigger model:

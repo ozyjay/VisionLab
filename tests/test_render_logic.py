@@ -79,6 +79,11 @@ class RenderLogicTests(unittest.TestCase):
         self.assertIn("faceIntervalValue", html)
         self.assertIn("faceIntervalSlider", html)
         self.assertIn("/face-interval", html)
+        self.assertIn('id="resolutionFast"', html)
+        self.assertIn('id="resolutionQuality"', html)
+        self.assertIn("640x480", html)
+        self.assertIn("1080p", html)
+        self.assertIn("/resolution", html)
 
     def test_dashboard_model_selector_is_above_live_detection_sections(self) -> None:
         html = _dashboard_html()
@@ -124,6 +129,23 @@ class RenderLogicTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(runtime.config.target_fps, 15)
         self.assertEqual(runtime.state()["target_fps"], 15)
+
+    def test_web_runtime_camera_resolution_updates_state(self) -> None:
+        runtime = _WebDashboardRuntime(AppConfig(camera_resolution_mode="fast"))
+
+        result = runtime.set_camera_resolution_mode("quality")
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(runtime.config.camera_resolution, (1920, 1080))
+        self.assertEqual(runtime.state()["camera_resolution_mode"], "quality")
+
+    def test_web_runtime_rejects_unknown_camera_resolution(self) -> None:
+        runtime = _WebDashboardRuntime(AppConfig(camera_resolution_mode="fast"))
+
+        result = runtime.set_camera_resolution_mode("cinema")
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(runtime.config.camera_resolution_mode, "fast")
 
     def test_web_runtime_face_interval_updates_state(self) -> None:
         runtime = _WebDashboardRuntime(AppConfig(face_detection_interval=2))

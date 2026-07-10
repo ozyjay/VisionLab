@@ -76,7 +76,8 @@ pwsh -File scripts/vision.ps1 web
 Then open <http://127.0.0.1:8019>. The browser dashboard is the preferred demo
 UX; OpenCV remains the local capture and vision backend. The dashboard includes
 a model selector for switching between downloaded `models/yolo*.pt` files and a
-YOLOE prompt editor for changing the object labels during the demo.
+YOLOE prompt editor for changing the object labels during the demo. Its
+performance controls can switch live capture between 640x480 and 1080p.
 
 Useful consolidated commands:
 
@@ -114,7 +115,7 @@ Configuration is loaded from environment variables:
 | --- | --- | --- |
 | `VISION_CAMERA_INDEX` | `0` | OpenCV camera index |
 | `VISION_TARGET_FPS` | `30` | Target display FPS; adjustable at runtime in the viewer and browser dashboard |
-| `VISION_CAMERA_RESOLUTION_MODE` | `fast` | Camera preset: `fast` = 640x480, `quality` = 1280x720 |
+| `VISION_CAMERA_RESOLUTION_MODE` | `fast` | Camera preset: `fast` = 640x480, `quality` = 1920x1080 (1080p) |
 | `VISION_ENABLE_OBJECT_DETECTION` | `false` | Start with object detection enabled |
 | `VISION_OBJECT_MODEL_PATH` | `models/yolo11n.pt` | Local YOLO model file |
 | `VISION_OBJECT_DETECTOR_BACKEND` | `ultralytics` | Object backend: `ultralytics`, `yoloe`, `auto`, or `none` |

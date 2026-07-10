@@ -23,7 +23,7 @@ import numpy as np
 
 from .accelerator import get_torch_accelerator_status
 from .camera import Camera, check_camera, cv2
-from .config import AppConfig
+from .config import AppConfig, CAMERA_RESOLUTION_PRESETS
 from .detectors.face_detector import FaceDetector
 from .detectors.object_detector import Detection, ObjectDetector
 from .scene_state import SceneState, build_scene_state
@@ -1062,6 +1062,9 @@ def _dashboard_html() -> str:
       color: var(--text);
       padding: 10px 12px;
     }
+    .resolution-switch { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+    .resolution-option.active { color: #052e16; background: var(--ok); border-color: transparent; font-weight: 800; }
+    #targetFpsValue { margin-top: 14px; }
     input[type="range"] {
       width: 100%;
       accent-color: var(--accent);
@@ -1124,6 +1127,11 @@ def _dashboard_html() -> str:
       </section>
       <section class="section">
         <div class="label">Performance</div>
+        <div class="sub" id="resolutionValue">Capture resolution: 640x480</div>
+        <div class="resolution-switch" role="group" aria-label="Capture resolution">
+          <button class="resolution-option" id="resolutionFast" onclick="applyResolution('fast')">640x480</button>
+          <button class="resolution-option" id="resolutionQuality" onclick="applyResolution('quality')">1080p</button>
+        </div>
         <div class="sub" id="targetFpsValue">Target camera loop: 30 FPS</div>
         <input id="targetFpsSlider" type="range" min="5" max="60" step="1" value="30" onchange="applyTargetFps(this.value)">
         <div class="sub" id="faceIntervalValue">Face detection: every 2 frames</div>
@@ -1181,6 +1189,13 @@ def _dashboard_html() -> str:
         document.getElementById('targetFpsValue').textContent =
           `Target camera loop: ${state.target_fps} FPS`;
         document.getElementById('targetFpsSlider').value = state.target_fps;
+        const resolutionLabel = `${state.capture_width}x${state.capture_height}`;
+        document.getElementById('resolutionValue').textContent =
+          `Capture resolution: ${resolutionLabel}`;
+        document.getElementById('resolutionFast').classList.toggle(
+          'active', state.camera_resolution_mode === 'fast');
+        document.getElementById('resolutionQuality').classList.toggle(
+          'active', state.camera_resolution_mode === 'quality');
         document.getElementById('faceIntervalValue').textContent =
           `Face detection: every ${state.face_detection_interval} frame${state.face_detection_interval === 1 ? '' : 's'}`;
         document.getElementById('faceIntervalSlider').value = state.face_detection_interval;
@@ -1247,6 +1262,11 @@ def _dashboard_html() -> str:
       await fetch('/target-fps', {method: 'POST', body});
       await refreshState();
     }
+    async function applyResolution(mode) {
+      const body = new URLSearchParams({mode});
+      await fetch('/resolution', {method: 'POST', body});
+      await refreshState();
+    }
     async function applyFaceInterval(value) {
       const body = new URLSearchParams({interval: value});
       await fetch('/face-interval', {method: 'POST', body});
@@ -1296,6 +1316,7 @@ class _WebDashboardRuntime:
         self.current_model_path = config.object_model_path
         self.current_backend = _backend_for_model_path(config.object_model_path, "auto")
         self.current_prompts = list(config.object_prompts or [])
+        self.capture_width, self.capture_height = config.camera_resolution
 
     def toggle(self, mode: str) -> None:
         with self.lock:
@@ -1391,6 +1412,29 @@ class _WebDashboardRuntime:
             "target_fps": target_fps,
         }
 
+    def set_camera_resolution_mode(self, mode: str) -> dict[str, Any]:
+        """Request one of the supported camera capture resolution presets."""
+
+        normalised = mode.strip().lower()
+        if normalised not in CAMERA_RESOLUTION_PRESETS:
+            return {
+                "ok": False,
+                "camera_resolution_mode": self.config.camera_resolution_mode,
+            }
+
+        with self.lock:
+            self.config.camera_resolution_mode = normalised
+            self.object_detections = []
+            self.face_detections = []
+
+        width, height = CAMERA_RESOLUTION_PRESETS[normalised]
+        return {
+            "ok": True,
+            "camera_resolution_mode": normalised,
+            "width": width,
+            "height": height,
+        }
+
     def set_face_detection_interval(self, value: str) -> dict[str, Any]:
         """Apply a new face detection interval at runtime."""
 
@@ -1453,6 +1497,9 @@ class _WebDashboardRuntime:
                 "object_prompts": list(self.current_prompts),
                 "object_confidence_threshold": self.config.object_confidence_threshold,
                 "target_fps": self.config.target_fps,
+                "camera_resolution_mode": self.config.camera_resolution_mode,
+                "capture_width": self.capture_width,
+                "capture_height": self.capture_height,
                 "face_detection_interval": self.config.face_detection_interval,
             }
 
@@ -1497,16 +1544,22 @@ class _WebDashboardRuntime:
                     continue
 
                 with self.lock:
+                    self.capture_height, self.capture_width = frame.shape[:2]
                     self.frame_id += 1
                     frame_id = self.frame_id
                     face_enabled = self.face_detection_enabled
                     object_enabled = self.object_detection_enabled
                     privacy_blur = self.privacy_blur
                     target_fps = self.config.target_fps
+                    requested_resolution = self.config.camera_resolution
                     face_detection_interval = self.config.face_detection_interval
 
                 if camera.target_fps != target_fps:
                     camera.set_target_fps(target_fps)
+                if camera.resolution != requested_resolution:
+                    actual_resolution = camera.set_resolution(requested_resolution)
+                    with self.lock:
+                        self.capture_width, self.capture_height = actual_resolution
 
                 now = time.perf_counter()
                 elapsed = now - last_time
@@ -1756,6 +1809,17 @@ def _make_dashboard_handler(runtime: _WebDashboardRuntime) -> type[BaseHTTPReque
             if parsed.path == "/target-fps":
                 target_fps = self._post_params().get("fps", [""])[0]
                 payload = json.dumps(runtime.set_target_fps(target_fps)).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+                return
+
+            if parsed.path == "/resolution":
+                mode = self._post_params().get("mode", [""])[0]
+                payload = json.dumps(runtime.set_camera_resolution_mode(mode)).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Cache-Control", "no-store")
