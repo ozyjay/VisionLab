@@ -81,6 +81,7 @@ class AppConfig:
     object_detection_interval: int = 3
     object_detection_hold_frames: int = 8
     object_device: str = "cpu"
+    face_detection_interval: int = 2
     face_model_path: str = "models/face_detection_yunet_2026may.onnx"
     captures_dir: str = "captures"
     logs_dir: str = "logs"
@@ -121,6 +122,9 @@ class AppConfig:
                 0, _env_int("VISION_OBJECT_DETECTION_HOLD_FRAMES", 8)
             ),
             object_device=os.getenv("VISION_OBJECT_DEVICE", "cpu").strip() or "cpu",
+            face_detection_interval=min(
+                30, max(1, _env_int("VISION_FACE_DETECTION_INTERVAL", 2))
+            ),
             face_model_path=os.getenv(
                 "VISION_FACE_MODEL_PATH", "models/face_detection_yunet_2026may.onnx"
             ),

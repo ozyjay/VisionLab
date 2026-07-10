@@ -113,7 +113,7 @@ Configuration is loaded from environment variables:
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `VISION_CAMERA_INDEX` | `0` | OpenCV camera index |
-| `VISION_TARGET_FPS` | `30` | Target display FPS |
+| `VISION_TARGET_FPS` | `30` | Target display FPS; adjustable at runtime in the viewer and browser dashboard |
 | `VISION_CAMERA_RESOLUTION_MODE` | `fast` | Camera preset: `fast` = 640x480, `quality` = 1280x720 |
 | `VISION_ENABLE_OBJECT_DETECTION` | `false` | Start with object detection enabled |
 | `VISION_OBJECT_MODEL_PATH` | `models/yolo11n.pt` | Local YOLO model file |
@@ -124,6 +124,7 @@ Configuration is loaded from environment variables:
 | `VISION_OBJECT_DETECTION_HOLD_FRAMES` | `8` | Keep previous boxes briefly when a detector frame returns empty, reducing demo flicker |
 | `VISION_OBJECT_DEVICE` | `cpu` | Ultralytics/Torch device: `cpu`, `auto`, `rocm`, or `cuda:0` |
 | `VISION_ENABLE_FACE_DETECTION` | `false` | Start with non-identifying face detection enabled |
+| `VISION_FACE_DETECTION_INTERVAL` | `2` | Run face detection every N frames and reuse cached boxes between runs; adjustable in the browser dashboard |
 | `VISION_ENABLE_VLLM` | `false` | Enable vLLM health check |
 | `VISION_VLLM_BASE_URL` | `http://localhost:8000/v1` | OpenAI-compatible vLLM base URL |
 | `VISION_VLLM_MODEL` | `local-model` | Future vLLM model name |
@@ -157,6 +158,7 @@ pwsh -File scripts/run-gpu.ps1 -ResolutionMode quality
 | `f` | Toggle non-identifying face detection |
 | `o` | Toggle object detection on or off |
 | `p` | Toggle privacy blur for detected faces |
+| `-` / `=` | Lower or raise the target FPS |
 | `[` / `]` | Lower or raise the object confidence threshold |
 | `h` | Show or hide help |
 

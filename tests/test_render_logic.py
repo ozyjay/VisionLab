@@ -11,6 +11,8 @@ from src.main import (
     _backend_for_model_path,
     _build_demo_commentary,
     _clamp_confidence_threshold,
+    _clamp_face_detection_interval,
+    _clamp_target_fps,
     _dashboard_html,
     _draw_overlay,
     _normalise_prompt_text,
@@ -72,6 +74,11 @@ class RenderLogicTests(unittest.TestCase):
         self.assertIn("/prompts", html)
         self.assertIn("confidenceSlider", html)
         self.assertIn("/confidence", html)
+        self.assertIn("targetFpsSlider", html)
+        self.assertIn("/target-fps", html)
+        self.assertIn("faceIntervalValue", html)
+        self.assertIn("faceIntervalSlider", html)
+        self.assertIn("/face-interval", html)
 
     def test_dashboard_model_selector_is_above_live_detection_sections(self) -> None:
         html = _dashboard_html()
@@ -90,6 +97,16 @@ class RenderLogicTests(unittest.TestCase):
         self.assertEqual(_clamp_confidence_threshold(1.5), 1.0)
         self.assertEqual(_clamp_confidence_threshold(0.45), 0.45)
 
+    def test_target_fps_is_clamped(self) -> None:
+        self.assertEqual(_clamp_target_fps(-5), 1)
+        self.assertEqual(_clamp_target_fps(120), 60)
+        self.assertEqual(_clamp_target_fps(14.6), 15)
+
+    def test_face_detection_interval_is_clamped(self) -> None:
+        self.assertEqual(_clamp_face_detection_interval(-5), 1)
+        self.assertEqual(_clamp_face_detection_interval(120), 30)
+        self.assertEqual(_clamp_face_detection_interval(3.4), 3)
+
     def test_web_runtime_confidence_threshold_updates_state(self) -> None:
         runtime = _WebDashboardRuntime(AppConfig(object_confidence_threshold=0.35))
 
@@ -98,6 +115,24 @@ class RenderLogicTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(runtime.config.object_confidence_threshold, 0.7)
         self.assertEqual(runtime.state()["object_confidence_threshold"], 0.7)
+
+    def test_web_runtime_target_fps_updates_state(self) -> None:
+        runtime = _WebDashboardRuntime(AppConfig(target_fps=30))
+
+        result = runtime.set_target_fps("15")
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(runtime.config.target_fps, 15)
+        self.assertEqual(runtime.state()["target_fps"], 15)
+
+    def test_web_runtime_face_interval_updates_state(self) -> None:
+        runtime = _WebDashboardRuntime(AppConfig(face_detection_interval=2))
+
+        result = runtime.set_face_detection_interval("5")
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(runtime.config.face_detection_interval, 5)
+        self.assertEqual(runtime.state()["face_detection_interval"], 5)
 
     def test_backend_for_model_path_auto_detects_yoloe(self) -> None:
         self.assertEqual(

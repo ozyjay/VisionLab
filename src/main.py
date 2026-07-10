@@ -107,6 +107,7 @@ def _check_object_detector(config: AppConfig) -> list[str]:
 def _check_face_detector(config: AppConfig) -> list[str]:
     lines = [
         f"Face detection enabled: {config.enable_face_detection}",
+        f"Face detection interval: every {config.face_detection_interval} frame(s)",
         f"Face detector model: {config.face_model_path}",
     ]
     try:
@@ -174,6 +175,7 @@ def run_health_check(config: AppConfig) -> int:
     print(f"object_detection_interval: {config.object_detection_interval}")
     print(f"object_detection_hold_frames: {config.object_detection_hold_frames}")
     print(f"object_device: {config.object_device}")
+    print(f"face_detection_interval: {config.face_detection_interval}")
     print(f"face_model_path: {config.face_model_path}")
     print(f"scene_state_interval_seconds: {config.scene_state_interval_seconds}")
     print(f"scene_state_log_path: {config.scene_state_log_path}")
@@ -542,6 +544,18 @@ def _clamp_confidence_threshold(value: float) -> float:
     return min(1.0, max(0.0, float(value)))
 
 
+def _clamp_target_fps(value: float) -> int:
+    """Clamp the target loop FPS to a practical local camera range."""
+
+    return int(min(60, max(1, round(float(value)))))
+
+
+def _clamp_face_detection_interval(value: float) -> int:
+    """Clamp face detection throttling to a practical frame interval."""
+
+    return int(min(30, max(1, round(float(value)))))
+
+
 def _set_detector_confidence_threshold(
     detector: ObjectDetector,
     confidence_threshold: float,
@@ -771,7 +785,7 @@ def _draw_overlay(
     _draw_text(canvas, "LIVE VIEW", video_card_x + 18, video_card_y + 28, (154, 163, 178), 0.45)
     _draw_text(
         canvas,
-        f"{width}x{height} actual · {config.camera_resolution_mode} mode · {fps:4.1f} FPS · frame {frame_id}",
+        f"{width}x{height} actual · {config.camera_resolution_mode} mode · {fps:4.1f}/{config.target_fps} FPS · frame {frame_id}",
         video_card_x + 18,
         video_card_y + 52,
         (230, 234, 242),
@@ -876,9 +890,17 @@ def _draw_overlay(
     _draw_text(canvas, f"Face: {face_status_short}", panel_x + 18, status_y + 52, (255, 220, 160), 0.43)
     _draw_text(
         canvas,
-        f"Confidence: {config.object_confidence_threshold:.2f}",
+        f"Target FPS: {config.target_fps} · confidence: {config.object_confidence_threshold:.2f}",
         panel_x + 18,
         status_y + 76,
+        (214, 219, 229),
+        0.43,
+    )
+    _draw_text(
+        canvas,
+        f"Face interval: every {config.face_detection_interval} frame(s)",
+        panel_x + 18,
+        status_y + 100,
         (214, 219, 229),
         0.43,
     )
@@ -888,7 +910,7 @@ def _draw_overlay(
     cv2.rectangle(canvas, (0, footer_y), (canvas_width, canvas_height), (28, 31, 38), -1)
     cv2.line(canvas, (0, footer_y), (canvas_width, footer_y), (58, 64, 78), 1)
     footer_text = (
-        "q quit   ·   f faces   ·   o objects   ·   p blur   ·   [ ] confidence"
+        "q quit   ·   f faces   ·   o objects   ·   p blur   ·   - = FPS   ·   [ ] confidence"
         if show_help
         else "H shows controls"
     )
@@ -1101,6 +1123,13 @@ def _dashboard_html() -> str:
         <input id="confidenceSlider" type="range" min="0.05" max="0.95" step="0.05" value="0.35" onchange="applyConfidence(this.value)">
       </section>
       <section class="section">
+        <div class="label">Performance</div>
+        <div class="sub" id="targetFpsValue">Target camera loop: 30 FPS</div>
+        <input id="targetFpsSlider" type="range" min="5" max="60" step="1" value="30" onchange="applyTargetFps(this.value)">
+        <div class="sub" id="faceIntervalValue">Face detection: every 2 frames</div>
+        <input id="faceIntervalSlider" type="range" min="1" max="10" step="1" value="2" onchange="applyFaceInterval(this.value)">
+      </section>
+      <section class="section">
         <div class="row">
           <div>
             <div class="label">Objects</div>
@@ -1149,6 +1178,12 @@ def _dashboard_html() -> str:
         const res = await fetch('/state', {cache: 'no-store'});
         const state = await res.json();
         document.getElementById('status').textContent = `${state.fps.toFixed(1)} FPS · frame ${state.frame_id}`;
+        document.getElementById('targetFpsValue').textContent =
+          `Target camera loop: ${state.target_fps} FPS`;
+        document.getElementById('targetFpsSlider').value = state.target_fps;
+        document.getElementById('faceIntervalValue').textContent =
+          `Face detection: every ${state.face_detection_interval} frame${state.face_detection_interval === 1 ? '' : 's'}`;
+        document.getElementById('faceIntervalSlider').value = state.face_detection_interval;
         document.getElementById('objectCount').textContent = state.objects.length;
         document.getElementById('faceCount').textContent = state.faces.length;
         const objectsMode = document.getElementById('objectsMode');
@@ -1205,6 +1240,16 @@ def _dashboard_html() -> str:
     async function applyConfidence(value) {
       const body = new URLSearchParams({threshold: value});
       await fetch('/confidence', {method: 'POST', body});
+      await refreshState();
+    }
+    async function applyTargetFps(value) {
+      const body = new URLSearchParams({fps: value});
+      await fetch('/target-fps', {method: 'POST', body});
+      await refreshState();
+    }
+    async function applyFaceInterval(value) {
+      const body = new URLSearchParams({interval: value});
+      await fetch('/face-interval', {method: 'POST', body});
       await refreshState();
     }
     async function toggleMode(name) {
@@ -1330,6 +1375,39 @@ class _WebDashboardRuntime:
             "status": detector_status,
         }
 
+    def set_target_fps(self, value: str) -> dict[str, Any]:
+        """Apply a new target camera loop FPS at runtime."""
+
+        try:
+            target_fps = _clamp_target_fps(float(value))
+        except ValueError:
+            target_fps = self.config.target_fps
+
+        with self.lock:
+            self.config.target_fps = target_fps
+
+        return {
+            "ok": True,
+            "target_fps": target_fps,
+        }
+
+    def set_face_detection_interval(self, value: str) -> dict[str, Any]:
+        """Apply a new face detection interval at runtime."""
+
+        try:
+            interval = _clamp_face_detection_interval(float(value))
+        except ValueError:
+            interval = self.config.face_detection_interval
+
+        with self.lock:
+            self.config.face_detection_interval = interval
+            self.face_detections = []
+
+        return {
+            "ok": True,
+            "face_detection_interval": interval,
+        }
+
     def switch_model(self, model_path: str) -> dict[str, Any]:
         """Switch to a local model file and return status details."""
 
@@ -1374,6 +1452,8 @@ class _WebDashboardRuntime:
                 "current_backend": self.current_backend,
                 "object_prompts": list(self.current_prompts),
                 "object_confidence_threshold": self.config.object_confidence_threshold,
+                "target_fps": self.config.target_fps,
+                "face_detection_interval": self.config.face_detection_interval,
             }
 
     def emit_jsonl(self) -> None:
@@ -1407,7 +1487,7 @@ class _WebDashboardRuntime:
 
         last_time = time.perf_counter()
         last_object_detection_frame: int | None = None
-        frame_delay = 1.0 / max(1, self.config.target_fps)
+        last_face_detection_frame: int | None = None
         try:
             while not self.stop_event.is_set():
                 loop_start = time.perf_counter()
@@ -1422,6 +1502,11 @@ class _WebDashboardRuntime:
                     face_enabled = self.face_detection_enabled
                     object_enabled = self.object_detection_enabled
                     privacy_blur = self.privacy_blur
+                    target_fps = self.config.target_fps
+                    face_detection_interval = self.config.face_detection_interval
+
+                if camera.target_fps != target_fps:
+                    camera.set_target_fps(target_fps)
 
                 now = time.perf_counter()
                 elapsed = now - last_time
@@ -1431,8 +1516,22 @@ class _WebDashboardRuntime:
                 last_time = now
 
                 face_detections: list[Detection] = []
-                if (face_enabled or privacy_blur) and face_detector.available:
-                    face_detections = face_detector.detect(frame)
+                if face_enabled or privacy_blur:
+                    if face_detector.available:
+                        should_detect_faces = (
+                            last_face_detection_frame is None
+                            or frame_id - last_face_detection_frame >= face_detection_interval
+                        )
+                        if should_detect_faces:
+                            face_detections = face_detector.detect(frame)
+                            last_face_detection_frame = frame_id
+                        else:
+                            with self.lock:
+                                face_detections = list(self.face_detections)
+                    else:
+                        last_face_detection_frame = None
+                else:
+                    last_face_detection_frame = None
 
                 with self.detector_lock:
                     detector = self.detector
@@ -1481,6 +1580,7 @@ class _WebDashboardRuntime:
                         self.frame_jpeg = encoded.tobytes()
 
                 spent = time.perf_counter() - loop_start
+                frame_delay = 1.0 / max(1, target_fps)
                 if spent < frame_delay:
                     time.sleep(frame_delay - spent)
         finally:
@@ -1653,6 +1753,28 @@ def _make_dashboard_handler(runtime: _WebDashboardRuntime) -> type[BaseHTTPReque
                 self.wfile.write(payload)
                 return
 
+            if parsed.path == "/target-fps":
+                target_fps = self._post_params().get("fps", [""])[0]
+                payload = json.dumps(runtime.set_target_fps(target_fps)).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+                return
+
+            if parsed.path == "/face-interval":
+                interval = self._post_params().get("interval", [""])[0]
+                payload = json.dumps(runtime.set_face_detection_interval(interval)).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+                return
+
             self.send_error(404)
 
     return DashboardHandler
@@ -1716,7 +1838,7 @@ def run_viewer(config: AppConfig) -> int:
     print(detector.status_message)
     print(
         "Keyboard controls: q quit, s save, j scene JSON, f face detection, "
-        "o object detection, p privacy blur, [ ] confidence, h help"
+        "o object detection, p privacy blur, - = target FPS, [ ] confidence, h help"
     )
 
     cv2.namedWindow(WINDOW_NAME, _viewer_window_flags())
@@ -1730,9 +1852,9 @@ def run_viewer(config: AppConfig) -> int:
     object_detection_enabled = config.enable_object_detection
     object_detections: list[Detection] = []
     last_object_detection_frame: int | None = None
+    last_face_detection_frame: int | None = None
     privacy_blur = False
     show_help = True
-    frame_delay = 1.0 / max(1, config.target_fps)
     last_scene_state_emit: float | None = None
 
     try:
@@ -1751,10 +1873,21 @@ def run_viewer(config: AppConfig) -> int:
                 fps = current_fps if fps == 0.0 else (fps * 0.9 + current_fps * 0.1)
             last_time = now
 
-            if (face_detection_enabled or privacy_blur) and face_detector.available:
-                face_detections = face_detector.detect(frame)
-            elif not face_detection_enabled and not privacy_blur:
+            if face_detection_enabled or privacy_blur:
+                if face_detector.available:
+                    should_detect_faces = (
+                        last_face_detection_frame is None
+                        or frame_id - last_face_detection_frame >= config.face_detection_interval
+                    )
+                    if should_detect_faces:
+                        face_detections = face_detector.detect(frame)
+                        last_face_detection_frame = frame_id
+                else:
+                    face_detections = []
+                    last_face_detection_frame = None
+            else:
                 face_detections = []
+                last_face_detection_frame = None
 
             if object_detection_enabled and detector.available:
                 should_infer = (
@@ -1848,6 +1981,11 @@ def run_viewer(config: AppConfig) -> int:
                 object_detections = []
                 last_object_detection_frame = None
                 print(f"Object confidence threshold: {config.object_confidence_threshold:.2f}")
+            elif key in {ord("-"), ord("_"), ord("="), ord("+")}:
+                delta = -5 if key in {ord("-"), ord("_")} else 5
+                config.target_fps = _clamp_target_fps(config.target_fps + delta)
+                camera.set_target_fps(config.target_fps)
+                print(f"Target FPS: {config.target_fps}")
             elif key == ord("h"):
                 show_help = not show_help
 
@@ -1870,6 +2008,7 @@ def run_viewer(config: AppConfig) -> int:
                 last_scene_state_emit = interval_check_time
 
             spent = time.perf_counter() - loop_start
+            frame_delay = 1.0 / max(1, config.target_fps)
             if spent < frame_delay:
                 time.sleep(frame_delay - spent)
     finally:

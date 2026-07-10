@@ -68,6 +68,13 @@ class Camera:
         ok, frame = self.capture.read()
         return bool(ok), frame
 
+    def set_target_fps(self, target_fps: int) -> None:
+        """Update the requested capture FPS when the backend supports it."""
+
+        self.target_fps = max(1, int(target_fps))
+        if self.capture is not None and cv2 is not None:
+            self.capture.set(cv2.CAP_PROP_FPS, float(self.target_fps))
+
     def release(self) -> None:
         """Release the camera if it is open."""
 
